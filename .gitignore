@@ -14,6 +14,12 @@ dist/
 
 # Nothing in compiler/ is generated here; the bundle lands in dist/.
 
+# --- scratch ---
+# `probe.mts` is a per-session scratch file for scripts/probe.mjs: write a
+# question about the compiler's AST there, run it, throw it away. Keeping it
+# out of the repository stops a throwaway dump from becoming a stale fixture.
+/probe.mts
+
 # --- misc ---
 .DS_Store
 Thumbs.db

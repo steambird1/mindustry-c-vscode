@@ -1,0 +1,238 @@
+{
+  "name": "mindustry-c-vscode",
+  "displayName": "Mindustry-C",
+  "description": "Language support for Mindustry-C: the C dialect compiled to Mindustry Logic (mlog).",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "publisher": "steambird",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "mindustry",
+    "mlog",
+    "mindustry-c",
+    "mindc",
+    "c",
+    "compiler"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/steambird1/mindustry-c-vscode"
+  },
+  "main": "./out/extension/extension.js",
+  "activationEvents": [
+    "onLanguage:mlgc",
+    "workspaceContains:**/*.mlgc"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "The compiler runs in-process; builds are limited in untrusted workspaces."
+    }
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "mlgc",
+        "aliases": [
+          "Mindustry-C",
+          "mindc",
+          "mlgc"
+        ],
+        "extensions": [
+          ".mlgc"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "mlog",
+        "aliases": [
+          "Mindustry Logic",
+          "mlog"
+        ],
+        "extensions": [
+          ".mlog"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mlgc",
+        "scopeName": "source.mlgc",
+        "path": "./syntaxes/mlgc.tmLanguage.json"
+      },
+      {
+        "language": "mlog",
+        "scopeName": "source.mlog",
+        "path": "./syntaxes/mlog.tmLanguage.json"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": "mlgc.json",
+        "url": "./schemas/mlgc.schema.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "mindc.compile",
+        "title": "Compile to Mindustry Logic",
+        "category": "Mindustry C",
+        "icon": "$(run)"
+      },
+      {
+        "command": "mindc.compileAndCopy",
+        "title": "Compile and Copy Output",
+        "category": "Mindustry C",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "mindc.cancelCompile",
+        "title": "Cancel Compilation",
+        "category": "Mindustry C",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "mindc.showOutput",
+        "title": "Show Compiled Output",
+        "category": "Mindustry C"
+      },
+      {
+        "command": "mindc.copyOutput",
+        "title": "Copy Compiled Output",
+        "category": "Mindustry C"
+      },
+      {
+        "command": "mindc.openConfiguration",
+        "title": "Open Configuration File",
+        "category": "Mindustry C",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "mindc.configure",
+        "title": "Configure Target and Memory",
+        "category": "Mindustry C",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "mindc.rescanCompiler",
+        "title": "Reload Mindustry-C Compiler",
+        "category": "Mindustry C"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "mindc.compile",
+          "when": "resourceLangId == mlgc",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mindc.configure",
+          "when": "resourceLangId == mlgc",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "mindc.compile",
+          "when": "resourceLangId == mlgc"
+        },
+        {
+          "command": "mindc.configure",
+          "when": "resourceLangId == mlgc"
+        },
+        {
+          "command": "mindc.cancelCompile",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Mindustry-C",
+      "properties": {
+        "mindc.diagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report compiler diagnostics while editing. Uses semantic analysis only (fast); a full build still runs on demand."
+        },
+        "mindc.diagnostics.debounce": {
+          "type": "number",
+          "default": 400,
+          "minimum": 0,
+          "maximum": 5000,
+          "description": "Milliseconds to wait after the last keystroke before analysing a file."
+        },
+        "mindc.diagnostics.openIncludes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Follow #include directives and report diagnostics in included files as well."
+        },
+        "mindc.compile.showPreview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the compiled mlog in a read-only editor after a successful build."
+        },
+        "mindc.compile.largeFileWarningChars": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 1000,
+          "description": "Warn before building a file larger than this. The optimiser's cost grows superlinearly (about 100 KB already takes half a minute)."
+        },
+        "mindc.config.globalPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the user-level configuration file. Defaults to ~/.mindustry-c/mlgc.json."
+        },
+        "mindc.config.workspaceFile": {
+          "type": "string",
+          "default": ".vscode/mlgc.json",
+          "description": "Workspace-relative path of the per-project configuration file, merged over the user-level one."
+        },
+        "mindc.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace the communication between VS Code and the Mindustry-C language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "gen": "node scripts/gen-grammar.mjs",
+    "gen:check": "node scripts/gen-grammar.mjs --check",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "patches:verify": "node scripts/verify-patch-neutrality.mjs",
+    "pretest": "node scripts/build-tests.mjs",
+    "test": "node --test \"out/test/*.test.js\"",
+    "test:golden": "node scripts/golden-compile.mjs",
+    "test:golden:update": "node scripts/golden-compile.mjs --update",
+    "check": "npm run typecheck && npm run gen:check && npm test && npm run test:golden && npm run patches:verify"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12",
+    "vscode-uri": "^3.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.4.5"
+  }
+}

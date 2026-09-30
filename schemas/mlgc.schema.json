@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Mindustry-C configuration",
+  "description": "Target version, compile options and the memory layout of the Mindustry-C program. Lives in ~/.mindustry-c/mlgc.json and may be overridden per project by <workspace>/.vscode/mlgc.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "activeConfiguration": {
+      "type": "string",
+      "description": "Name of the configuration to use. The workspace file may override this."
+    },
+    "configurations": {
+      "type": "array",
+      "description": "One entry per build target. The first one is used if activeConfiguration names nothing.",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/configuration" }
+    }
+  },
+  "definitions": {
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Identifier of this configuration.",
+          "minLength": 1
+        },
+        "targetVersion": {
+          "type": "number",
+          "description": "Mindustry version the output runs on. Gates which instructions and language features are emitted. The compiler defaults to 154.3.",
+          "default": 154.3,
+          "examples": [146, 150, 152, 154.3, 155, 156, 157]
+        },
+        "includePaths": {
+          "type": "array",
+          "description": "Extra directories searched by #include, after the including file's own directory.",
+          "items": { "type": "string" }
+        },
+        "memoryBlocks": {
+          "type": "array",
+          "description": "The memory cells and banks the program may use. ORDER IS SIGNIFICANT: the nth block here is bound to the nth memory building the processor finds among its links, so it must match the order you wired up in the map.",
+          "items": { "$ref": "#/definitions/memoryBlock" }
+        },
+        "compilerOptions": {
+          "type": "object",
+          "description": "Defaults for the pragmas that tune code generation. A #pragma in the source still wins over these.",
+          "additionalProperties": false,
+          "properties": {
+            "array": {
+              "type": "boolean",
+              "description": "Default for #pragma optimize(array): keep arrays in registers instead of memory.",
+              "default": false
+            },
+            "constArray": {
+              "type": "boolean",
+              "description": "Default for the third argument of #pragma optimize(array): also optimise arrays that are never written.",
+              "default": false
+            },
+            "pointer": {
+              "type": "boolean",
+              "description": "Default for #pragma optimize(pointer): store the name of a pointee instead of its address. Requires targetVersion >= 150 and forbids pointer arithmetic on those pointers.",
+              "default": false
+            },
+            "structPointerThreshold": {
+              "type": "number",
+              "description": "Default for #pragma optimize(struct_pointer, n): largest struct, in registers, that a pointer may carry by name. Memory is used for anything bigger.",
+              "minimum": 0
+            },
+            "stackCheck": {
+              "type": "string",
+              "description": "Default for #pragma stackcheck(fn): called when a stack frame cannot grow. Empty means do not check capacity at all.",
+              "default": ""
+            },
+            "stackUnderflow": {
+              "type": "string",
+              "description": "Default for #pragma stackunderflow(fn): called when the stack is walked below the first block. Empty means do not check.",
+              "default": ""
+            },
+            "noInline": {
+              "type": "array",
+              "description": "Default for #pragma noinline: functions that are never inlined automatically. An explicit inline keyword outranks this.",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "idOverrides": {
+          "type": "object",
+          "description": "Content ids for a processor whose ordering differs from the built-in table. Equivalent to #pragma id(category, @name: id).",
+          "additionalProperties": false,
+          "properties": {
+            "item": { "$ref": "#/definitions/idMap" },
+            "liquid": { "$ref": "#/definitions/idMap" },
+            "unit": { "$ref": "#/definitions/idMap" },
+            "block": { "$ref": "#/definitions/idMap" }
+          }
+        }
+      }
+    },
+    "idMap": {
+      "type": "object",
+      "description": "Maps @name to an id in this category.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "integer", "minimum": 0 },
+          { "type": "null" }
+        ]
+      }
+    },
+    "memoryBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "size"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Becomes a link variable in the generated code (<name>_id), so it must be a valid Mindustry identifier and unique within the configuration.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "size": {
+          "type": "integer",
+          "description": "Capacity in bytes. A memory cell holds 64, a memory bank 256, a world cell 256.",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "building": {
+          "type": "string",
+          "description": "The in-game building this block corresponds to. Informational: it suggests a size and documents the wiring.",
+          "enum": ["memory-cell", "memory-bank", "world-cell", "unconfigured"]
+        },
+        "note": {
+          "type": "string",
+          "description": "Free text: where this block is wired in the map."
+        }
+      }
+    }
+  }
+}

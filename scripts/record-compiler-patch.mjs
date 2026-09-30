@@ -9,11 +9,18 @@
  *   cd compiler && git apply ../patches/0001-expose-prepare-and-analyze.patch
  *
  * usage:
- *   node scripts/record-compiler-patch.mjs <beforeFile> <afterFile> <out.patch> [--paths a/mindc.js b/mindc.js]
+ *   node scripts/record-compiler-patch.mjs <beforeFile> <afterFile> <out.patch> [--paths <repoPath>]
  *
  * `beforeFile` / `afterFile` are snapshots of one compiler file taken
  * immediately before and after the edit, so the diff contains ONLY that edit
  * (not any of the compiler author's own uncommitted work).
+ *
+ * `--paths` is the path the file has inside the compiler repository, which is
+ * what `git apply` needs in the `a/` and `b/` headers. It defaults to the
+ * basename of `afterFile`.
+ *
+ * Everything is written in Node, not PowerShell: the compiler is full of CJK
+ * comments, and PowerShell 5.1's `Set-Content` round-trip corrupts them.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,12 +30,18 @@ import { execFileSync } from 'node:child_process';
 const [, , before, after, out, ...rest] = process.argv;
 if (!before || !after || !out) {
 	console.error(
-		'usage: node scripts/record-compiler-patch.mjs <beforeFile> <afterFile> <out.patch> [--paths a/x.js b/x.js]'
+		'usage: node scripts/record-compiler-patch.mjs <beforeFile> <afterFile> <out.patch> [--paths <repoPath>]'
 	);
 	process.exit(2);
 }
 const pathsIdx = rest.indexOf('--paths');
-const targetPath = pathsIdx >= 0 ? rest[pathsIdx + 1] : path.basename(after);
+// `--paths mindc.js`; tolerate `a/mindc.js` and `b/mindc.js` too, since that is
+// the form a `git diff` header uses and it is easy to paste.
+const targetPath = (() => {
+	const given = pathsIdx >= 0 ? rest[pathsIdx + 1] : undefined;
+	if (!given) return path.basename(after);
+	return given.replace(/^[ab]\//, '');
+})();
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'mindc-patch-'));
 const dirA = path.join(work, 'left');
@@ -62,15 +75,13 @@ try {
 	if (typeof diff !== 'string') throw error;
 }
 
+// The diff's own paths are left/mindc.js and right/mindc.js; `git apply` needs
+// them to be the paths the file has in the compiler repository.
 const normalised = diff
-	.split(`a/left/${name}`)
-	.join(`a/${targetPath}`)
-	.split(`b/left/${name}`)
-	.join(`b/${targetPath}`)
-	.split(`a/right/${name}`)
-	.join(`a/${targetPath}`)
-	.split(`b/right/${name}`)
-	.join(`b/${targetPath}`);
+	.replaceAll(`a/left/${name}`, `a/${targetPath}`)
+	.replaceAll(`b/left/${name}`, `b/${targetPath}`)
+	.replaceAll(`a/right/${name}`, `a/${targetPath}`)
+	.replaceAll(`b/right/${name}`, `b/${targetPath}`);
 
 fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
 fs.writeFileSync(out, normalised, 'utf8');
