@@ -1,0 +1,71 @@
+diff --git a/mindc.js b/mindc.js
+index 4e896b5..819792b 100644
+--- a/mindc.js
++++ b/mindc.js
+@@ -342,10 +342,18 @@ export class Compiler {
+ 
+     }
+     
+-    async compile() {
+-        try {
+-            // 编译管道
+-            const tokens = await this.lexer.tokenize();
++    /**
++     * 第一阶段：词法分析 + 读入 `#pragma` + 建立各阶段的配置，然后重建各阶段。
++     *
++     * `compile()` 先调用它；只需要诊断信息、不需要代码生成的工具（编辑器）可以
++     * 调用它之后只跑 parse + analyze，跳过慢得多的优化器。
++     *
++     * 本方法不做任何错误处理：出错时照常抛出，由调用方决定如何处理。
++     * @returns {Promise<{tokens: import('./mindcLexer.js').Token[]}>}
++     */
++    async prepare() {
++        // 编译管道
++        const tokens = await this.lexer.tokenize();
+ 
+ 			// Handle extensions here now
+ 			const extensions = [...this.embeddedExtensions, ...tokens.extraExtensions];
+@@ -522,6 +530,43 @@ export class Compiler {
+ 			this.optimizer = new Optimizer(this);
+ 			this.codeGenerator = new CodeGenerator(this);
+ 
++			return { tokens };
++    }
++
++    /**
++     * 只做语法 + 语义分析（不优化、不生成代码）。给编辑器做实时诊断用。
++     *
++     * 返回的 `ast` 在没有错误时是语义分析后的 AST，可用于取符号表；出错时为 null。
++     * @returns {Promise<{ast: any, errors: any[], warnings: any[]}>}
++     */
++    async analyze() {
++        try {
++            await this.prepare();
++
++            const ast = this.parser.parse();
++            if (ast.errors.length) {
++                return { ast: null, errors: this.getAllErrors(), warnings: this.getAllWarnings() };
++            }
++            const analyzed = this.semanticAnalyzer.analyze(ast.ast);
++            return {
++                ast: analyzed.errors.length ? null : analyzed.ast,
++                errors: this.getAllErrors(),
++                warnings: this.getAllWarnings()
++            };
++        } catch (error) {
++            return {
++                ast: null,
++                errors: this.getAllErrors(),
++                warnings: this.getAllWarnings(),
++                fatalError: error.message + "\n" + error.stack
++            };
++        }
++    }
++
++    async compile() {
++        try {
++            await this.prepare();
++
+             const ast = this.parser.parse();
+ 			if (ast.errors.length) {
+ 				return {

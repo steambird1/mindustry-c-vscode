@@ -1,0 +1,121 @@
+diff --git a/mindcLexer.js b/mindcLexer.js
+index 15f84d4..ee4e78f 100644
+--- a/mindcLexer.js
++++ b/mindcLexer.js
+@@ -349,7 +349,17 @@ export const PUNCTUATORS = {
+ 
+ 
+ export class Lexer {
+-    constructor(sourceCode, macros = {}, suppressMacroExpansion = false, macroParams = {}) {
++    /**
++     * @param {string} sourceCode
++     * @param {Object} macros
++     * @param {boolean} suppressMacroExpansion
++     * @param {Object} macroParams
++     * @param {{ includeResolver?: (filename: string, from: string?) => Promise<any>, filename?: string }} [options]
++     *   `options.includeResolver` 供非浏览器环境（编辑器扩展、Node）解析 `#include`。
++     *   不提供时保持原行为：走 `fetch('/include/...')`。
++     *   `options.filename` 是本文件的路径，会传给 resolver 并写进 token 的 location。
++     */
++    constructor(sourceCode, macros = {}, suppressMacroExpansion = false, macroParams = {}, options = {}) {
+         this.sourceCode = sourceCode;
+         this.position = 0;
+         this.line = 1;
+@@ -357,7 +367,12 @@ export class Lexer {
+         this.tokens = [];
+         this.errors = [];
+         this.suppressMacroExpansion = suppressMacroExpansion;
+-        
++        /**
++         * @type {(filename: string, from: string?) => Promise<{text: string, path: string?} | {extension: any} | null>}
++         */
++        this.includeResolver = options?.includeResolver ?? null;
++        this.filename = options?.filename ?? null;
++
+         // 预处理器状态
+         this.macros = {...macros, '__MINDUSTRY__': '1'}; // 存储宏定义 {name: value}
+         this.macroParams = {...macroParams};
+@@ -1125,6 +1140,14 @@ export class Lexer {
+         const match = args.trim().match(/^["<](.+?)[">]$/);
+         if (match) {
+             const filename = match[1];
++            /*
++            Non-browser hosts (the VS Code extension) install `includeResolver`
++            and never reach the HTTP path below.
++            */
++            if (typeof this.includeResolver === 'function') {
++                await this.handleIncludeWithResolver(filename, location);
++                return;
++            }
+             try {
+                 // 假设有同步获取文本的方法（在实际浏览器中需使用异步 fetch 并配合 async/await）
+                 
+@@ -1183,6 +1206,68 @@ export class Lexer {
+         }
+         
+     }
++
++    /**
++     * `#include` 的宿主注入版实现：文本由 `this.includeResolver` 提供（编辑器扩展
++     * 从磁盘读，解析结果与下面 fetch 分支一致），`.js` 扩展则由 resolver 直接
++     * 交出已加载好的 extension 对象。
++     *
++     * @param {string} filename 指令里写的（不含引号/尖括号）
++     * @param {*} location 指令所在位置
++     */
++    async handleIncludeWithResolver(filename, location) {
++        let resolved;
++        try {
++            resolved = await this.includeResolver(filename, this.filename ?? null);
++        } catch (e) {
++            this.addError(`Cannot open included file: ${filename}`, location);
++            return;
++        }
++        if (!resolved) {
++            this.addError(`Cannot open included file: ${filename}`, location);
++            return;
++        }
++
++        try {
++            // A `.js` include is a compiler extension: the host has loaded it.
++            if (resolved.extension) {
++                this.extraExtensions.push(resolved.extension);
++                return;
++            }
++
++            const includedPath = resolved.path ?? filename;
++            const includedLexer = new Lexer(resolved.text, this.macros, false, this.macroParams, {
++                includeResolver: this.includeResolver,
++                filename: includedPath
++            });
++            const includedResult = await includedLexer.tokenize();
++            if (!this.suppressMacroExpansion) {
++                this.tokens.push(...includedResult.tokens.filter(token => token.type != TokenType.EOF)
++                    .map(token => {
++                    return {
++                        ...token,
++                        location: {
++                            ...token.location,
++                            filename: token.location.filename ?? includedPath
++                        }
++                    }
++                }));
++            }
++
++            this.errors.push(...includedResult.errors);
++            this.pragmas.push(...includedResult.pragmas);
++            this.macros = {
++                ...this.macros,
++                ...includedLexer.macros
++            };
++            this.macroParams = {
++                ...this.macroParams,
++                ...includedLexer.macroParams
++            };
++        } catch (e) {
++            this.addError(`Cannot open included file: ${filename}`, location);
++        }
++    }
+     
+     // 辅助方法：仅跳过空白，不跳过换行（用于预处理器行内）
+     skipWhitespaceOnly() {

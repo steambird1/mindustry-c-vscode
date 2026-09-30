@@ -5,8 +5,14 @@ dist/
 *.vsix
 *.tsbuildinfo
 
-# --- the compiler bundle is generated from compiler/ ---
-# (nothing to ignore inside compiler/ itself; keep it pristine)
+# --- the Mindustry-C compiler ---
+# `compiler/` is its own git repository (upstream: mindustry-c) and keeps its
+# own history. It is a *build input* of this extension, not part of it: the
+# extension bundles it with esbuild and applies the patches in `patches/`.
+# See docs/COMPILER-INTEGRATION.md.
+/compiler/
+
+# Nothing in compiler/ is generated here; the bundle lands in dist/.
 
 # --- misc ---
 .DS_Store
