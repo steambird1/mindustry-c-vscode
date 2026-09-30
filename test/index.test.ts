@@ -1,0 +1,623 @@
+/*
+ * The symbol index and the coding features, end to end.
+ *
+ * These run against the real compiler through the bridge, so they cover the
+ * awkward parts: a declaration's location points at the start of the statement
+ * rather than at the name, a struct definition's node type is the bare keyword
+ * `struct`, a `MemberExpression` loses its member identifier entirely, and
+ * overloads are renamed to `name__ov1` internally. Hand-written ASTs would test
+ * none of that.
+ *
+ * What is asserted is the shape the language server depends on: that every name
+ * resolves to the others, that positions land inside the name they claim to, and
+ * that the resolver degrades rather than lying when it cannot resolve something.
+ *
+ * Probe points are located by `indexOf` rather than by counting lines, so that
+ * editing the fixture does not silently invalidate the expectations. Each one is
+ * asserted to hold the expected word, which is what catches a needle that no
+ * longer means what it did.
+ */
+import assert from 'node:assert/strict';
+import { before, describe, it } from 'node:test';
+
+import { capabilities } from '../src/compiler/bridge';
+import { analyse, type AnalysisHost } from '../src/compiler/analysis';
+import {
+	complete,
+	definition,
+	hover,
+	isReservedName,
+	offsetOf,
+	outline,
+	positionIn,
+	references,
+	rename,
+	type IndexedDocument,
+} from '../server/features';
+import type { AnalysisRequest, DocumentIndex } from '../src/common/types';
+
+const URI = 'file:///project/main.mlgc';
+const PATH = '/project/main.mlgc';
+
+const SOURCE = `// A small program to index.
+struct point {
+	int x;
+	int y;
+};
+
+int total(int a, int b) {
+	return a + b;
+}
+
+int main() {
+	point p;
+	p.x = 1;
+	p.y = 2;
+	content_t ore = @copper;
+	int s = total(p.x, p.y);
+	return s;
+}
+`;
+
+/** The offset of `needle`, verified to be a whole word. */
+function at(needle: string, { occurrence = 1 }: { occurrence?: number } = {}): number {
+	let offset = -1;
+	for (let seen = 0; seen < occurrence; seen++) {
+		offset = SOURCE.indexOf(needle, offset + 1);
+	}
+	assert.notEqual(offset, -1, `"${needle}" is not in the fixture`);
+	// A needle that is a prefix of a longer name would put the cursor in the
+	// middle of a different identifier, which is the failure this guards against.
+	const after = SOURCE[offset + needle.length] ?? '';
+	assert.ok(!/[A-Za-z0-9_]/.test(after), `"${needle}" is part of a longer name`);
+	return offset;
+}
+
+/** The offset of the start of `word` in a MemberExpression's object, plus the member. */
+function memberAt(expression: string): number {
+	const offset = at(expression);
+	const dot = SOURCE.indexOf('.', offset);
+	assert.notEqual(dot, -1, `${expression} has no member access`);
+	return dot + 1;
+}
+
+/** The index works in fs paths; the tests assert in uris. */
+const toUri = (path: string) => (path === PATH ? URI : `file://${path}`);
+
+function request(text: string): AnalysisRequest {
+	return {
+		id: 1,
+		uri: URI,
+		text,
+		version: 1,
+		targetVersion: 154.3,
+		memoryBlocks: [{ name: 'cell1', size: 64, building: 'memory-cell' }],
+		includePaths: [],
+	};
+}
+
+const host: AnalysisHost = { readFile: () => null, pathOf: () => PATH };
+
+let index: DocumentIndex;
+let document: IndexedDocument;
+
+before(async () => {
+	assert.ok(capabilities.analyze, 'compiler patch 0001 is not applied; the analysis path needs it');
+	const response = await analyse(request(SOURCE), host);
+	assert.deepEqual(
+		response.diagnostics.map(diagnostic => diagnostic.message),
+		[],
+		'the fixture must compile cleanly, or these tests prove nothing'
+	);
+	assert.ok(response.index, 'no index was produced');
+	index = response.index;
+	document = { uri: URI, index, text: SOURCE };
+});
+
+/** The text a position covers, which must be the name it claims to be. */
+function covered(start: { line: number; character: number }, length: number): string {
+	const offset = offsetOf(SOURCE, start);
+	return SOURCE.slice(offset, offset + length);
+}
+
+/** A position, for a readable failure message. */
+function show(start: { line: number; character: number }): string {
+	return `${start.line}:${start.character}`;
+}
+
+describe('positions', () => {
+	it('round-trips an offset through a position', () => {
+		const offset = at('total');
+		assert.equal(offsetOf(SOURCE, positionIn(SOURCE, offset)), offset);
+	});
+
+	it('clamps a position past the end of the file', () => {
+		assert.equal(offsetOf(SOURCE, { line: 9999, character: 9999 }), SOURCE.length);
+		assert.deepEqual(positionIn(SOURCE, SOURCE.length + 50), positionIn(SOURCE, SOURCE.length));
+	});
+});
+
+describe('the index', () => {
+	it('finds the struct, the functions and the main declaration', () => {
+		const names = index.symbols.map(symbol => symbol.name);
+		for (const expected of ['point', 'total', 'main']) {
+			assert.ok(names.includes(expected), `expected ${expected} in ${names.join(', ')}`);
+		}
+	});
+
+	it('gives every symbol a range that covers the name it names', () => {
+		// A declaration's location is the start of the statement, so the index has
+		// to find the name itself. Getting this wrong by one token makes
+		// go-to-definition land on the return type, and rename rewrite it.
+		for (const symbol of index.symbols) {
+			if (symbol.path !== PATH) continue;
+			assert.equal(
+				covered(symbol.range.start, symbol.name.length),
+				symbol.name,
+				`${symbol.kind} ${symbol.name} is declared at ${show(symbol.range.start)}`
+			);
+		}
+	});
+
+	it('gives every reference a range that covers the name it names', () => {
+		for (const reference of index.references) {
+			const name = reference.target?.name;
+			if (!name || reference.path !== PATH) continue;
+			assert.equal(
+				covered(reference.range.start, name.length),
+				name,
+				`a reference to ${name} is at ${show(reference.range.start)}`
+			);
+		}
+	});
+
+	it('lists the struct with its members', () => {
+		const point = index.structs.find(struct => struct.name === 'point');
+		assert.ok(point, 'struct point was not indexed');
+		assert.deepEqual(
+			point.members.map(member => member.name),
+			['x', 'y']
+		);
+		// Members carry their own offsets, taken from the AST, so each one is
+		// addressable without re-scanning the struct's text.
+		for (const member of point.members) {
+			assert.equal(SOURCE.slice(member.offset, member.offset + member.name.length), member.name);
+		}
+		assert.equal(covered(point.range.start, point.name.length), 'point');
+	});
+
+	it('records the declared type of a struct member', () => {
+		const point = index.structs.find(struct => struct.name === 'point')!;
+		assert.deepEqual(
+			point.members.map(member => member.type),
+			['int', 'int']
+		);
+	});
+
+	it('marks locals apart from file scope, so the outline can tell them apart', () => {
+		const scope = (name: string) => index.symbols.find(symbol => symbol.name === name)?.scope;
+		assert.equal(scope('total'), 'file');
+		assert.equal(scope('main'), 'file');
+		assert.equal(scope('point'), 'file');
+		assert.equal(scope('p'), 'local');
+		assert.equal(scope('s'), 'local');
+		// A parameter is block scope even though it is declared in a signature.
+		assert.equal(scope('a'), 'local');
+	});
+
+	it('does not invent a type for a built-in type name', () => {
+		// A TypeSpecifier carries a `typeName`, so a naive "this node declares a
+		// type" rule records every return type as a declaration of `int`.
+		const types = index.symbols.filter(symbol => symbol.kind === 'type');
+		assert.deepEqual(
+			types.map(symbol => symbol.name),
+			['point']
+		);
+	});
+
+	it('orders references by offset', () => {
+		const offsets = index.references.map(reference => reference.offset);
+		assert.deepEqual(offsets, [...offsets].sort((a, b) => a - b));
+	});
+});
+
+describe('hover', () => {
+	it('describes a parameter at its use', () => {
+		const shown = hover(document, positionIn(SOURCE, at('a + b')));
+		assert.ok(shown, 'no hover for a parameter');
+		assert.match(shown.contents, /a/);
+	});
+
+	it('describes a function at its use, with its signature', () => {
+		const shown = hover(document, positionIn(SOURCE, at('total(p.x')));
+		assert.ok(shown, 'no hover for a function');
+		assert.match(shown.contents, /int total\(int, int\)/);
+	});
+
+	it('describes a struct member access', () => {
+		const shown = hover(document, positionIn(SOURCE, memberAt('p.x = 1')));
+		assert.ok(shown, 'no hover for a struct member');
+		assert.match(shown.contents, /x/);
+	});
+
+	it('says which struct a member belongs to', () => {
+		const shown = hover(document, positionIn(SOURCE, memberAt('p.x = 1')));
+		assert.match(shown!.contents, /Field of `point`/);
+	});
+
+	it('returns nothing on whitespace rather than guessing', () => {
+		assert.equal(hover(document, positionIn(SOURCE, SOURCE.indexOf('\n\nint main'))), null);
+	});
+});
+
+describe('go to definition', () => {
+	it('jumps from a use of a function to its declaration', () => {
+		const found = definition(document, positionIn(SOURCE, at('total(p.x')), toUri);
+		assert.ok(found, 'no definition for total');
+		assert.equal(found.uri, URI);
+		// The declaration's own location is the `int`; this must not land there.
+		assert.equal(covered(found.range.start, 'total'.length), 'total');
+	});
+
+	it('jumps from a struct member to its declaration', () => {
+		const found = definition(document, positionIn(SOURCE, memberAt('p.y = 2')), toUri);
+		assert.ok(found, 'no definition for the member y');
+		assert.equal(covered(found.range.start, 1), 'y');
+		assert.equal(positionIn(SOURCE, offsetOf(SOURCE, found.range.start)).line, 3, 'expected the struct body');
+	});
+
+	it('jumps from a local variable to its declaration', () => {
+		const found = definition(document, positionIn(SOURCE, at('p.y', { occurrence: 2 })), toUri);
+		assert.ok(found, 'no definition for p');
+		assert.equal(covered(found.range.start, 1), 'p');
+	});
+
+	it('jumps from a declaration to itself', () => {
+		const found = definition(document, positionIn(SOURCE, at('total', { occurrence: 1 })), toUri);
+		assert.equal(found?.uri, URI);
+	});
+});
+
+describe('find references', () => {
+	it('lists the declaration and every use', () => {
+		const found = references([document], document, positionIn(SOURCE, at('total(p.x')));
+		assert.equal(found.length, 2, 'expected the declaration plus the one call');
+		assert.ok(found.every(location => location.uri === URI));
+	});
+
+	it('lists every use of a struct member', () => {
+		const found = references([document], document, positionIn(SOURCE, memberAt('p.x = 1')));
+		// The declaration in the struct plus the two `p.x` uses.
+		assert.equal(found.length, 3);
+	});
+
+	it('finds the same set from a member declaration as from a use', () => {
+		const fromUse = references([document], document, positionIn(SOURCE, memberAt('p.x = 1'))).map(
+			location => JSON.stringify(location.range)
+		);
+		const fromDeclaration = references([document], document, positionIn(SOURCE, at('int x') + 4)).map(
+			location => JSON.stringify(location.range)
+		);
+		assert.deepEqual(fromDeclaration, fromUse);
+	});
+
+	it('finds the same set from the declaration as from a use', () => {
+		const fromUse = references([document], document, positionIn(SOURCE, at('total(p.x'))).map(location =>
+			JSON.stringify(location.range)
+		);
+		const fromDeclaration = references([document], document, positionIn(SOURCE, at('total'))).map(
+			location => JSON.stringify(location.range)
+		);
+		assert.deepEqual(fromDeclaration, fromUse);
+	});
+
+	it('finds every use of a local, not just the first', () => {
+		const found = references([document], document, positionIn(SOURCE, at('p.x = 1')));
+		// The declaration, plus the four `p.` accesses: two assignments and the
+		// two arguments of the call.
+		assert.equal(found.length, 5);
+	});
+});
+
+describe('rename', () => {
+	it('rewrites the declaration and every use, and nothing else', () => {
+		const edit = rename([document], document, positionIn(SOURCE, at('total(p.x')), 'sum');
+		assert.ok(edit, 'rename produced no edit');
+		const edits = edit.changes[URI];
+		assert.ok(edits);
+		assert.equal(edits.length, 2);
+		assert.equal(applyEdits(SOURCE, edits), SOURCE.replaceAll('total', 'sum'));
+	});
+
+	it('does not touch the return type when renaming a function', () => {
+		// The compiler points a declaration at its own return type, so a rename
+		// that trusted that position would rewrite `int` into the new name.
+		const edit = rename([document], document, positionIn(SOURCE, at('total')), 'sum');
+		assert.equal(applyEdits(SOURCE, edit!.changes[URI]), SOURCE.replaceAll('total', 'sum'));
+	});
+
+	it('renames a struct member through a dot access', () => {
+		const edit = rename([document], document, positionIn(SOURCE, memberAt('p.x = 1')), 'horizontal');
+		assert.ok(edit, 'rename produced no edit for a member');
+		const edited = applyEdits(SOURCE, edit.changes[URI]);
+		// The declaration and both uses, and nothing else. `x` also appears inside
+		// `point`, so a rename that matched text instead of ranges would corrupt it.
+		assert.equal(edited.split('horizontal').length - 1, 3);
+		assert.ok(edited.includes('\tint horizontal;'), 'the member declaration was not renamed');
+		assert.ok(edited.includes('p.horizontal = 1;'), 'the first use was not renamed');
+		assert.ok(edited.includes('total(p.horizontal, p.y)'), 'the second use was not renamed');
+		assert.ok(edited.includes('struct point'), 'an unrelated occurrence of the letter was rewritten');
+	});
+
+	it('renames a struct member from its own declaration', () => {
+		const edit = rename([document], document, positionIn(SOURCE, at('int x') + 4), 'horizontal');
+		assert.ok(edit, 'rename produced no edit from the member declaration');
+		assert.equal(applyEdits(SOURCE, edit.changes[URI]).split('horizontal').length - 1, 3);
+	});
+
+	it('refuses to rename a name the compiler owns', () => {
+		// Renaming `print` would break every call site in every header.
+		assert.equal(isReservedName('print'), true);
+		assert.equal(isReservedName('total'), false);
+	});
+
+	it('refuses to rename a name it could not resolve', () => {
+		assert.equal(rename([document], document, positionIn(SOURCE, at('return s')), 'x'), null);
+	});
+});
+
+describe('completion', () => {
+	it('offers the program`s own names', () => {
+		const offset = SOURCE.indexOf('int s = ') + 'int s = '.length;
+		const labels = complete(document, positionIn(SOURCE, offset)).map(item => item.label);
+		for (const expected of ['total', 'main', 'point', 'p', 's']) {
+			assert.ok(labels.includes(expected), `expected ${expected} in ${labels.join(', ')}`);
+		}
+	});
+
+	it('offers struct members after a dot', () => {
+		// The member identifier in a MemberExpression has no location, so this
+		// depends on the text scan in symbols.ts rather than on the AST.
+		const items = complete(document, positionIn(SOURCE, memberAt('p.x = 1')));
+		assert.deepEqual(
+			items.map(item => item.label).sort(),
+			['x', 'y']
+		);
+		assert.ok(items.every(item => item.kind === 'field'));
+	});
+
+	it('offers struct members after a half-typed name', () => {
+		const items = complete(document, positionIn(SOURCE, memberAt('p.x = 1') + 1));
+		assert.deepEqual(items.map(item => item.label).sort(), ['x', 'y']);
+	});
+
+	it('offers content constants and instructions after an @', () => {
+		const offset = SOURCE.indexOf('= @') + 3;
+		const labels = new Set(complete(document, positionIn(SOURCE, offset)).map(item => item.label));
+		// `@copper` is an item id. The keywords must not be offered here: they
+		// would be accepted and produce source that does not compile.
+		assert.ok(labels.has('@copper'), 'no content constants offered');
+		assert.ok(labels.has('@lead'), 'no instructions offered');
+		assert.ok(!labels.has('return'), 'a keyword leaked into @ completion');
+	});
+
+	it('replaces only the name after the @, not the sigil', () => {
+		// `@` is not a word character, so without an explicit range accepting
+		// `@copper` would leave the user with `@@copper`.
+		const offset = SOURCE.indexOf('= @') + 3;
+		const [first] = complete(document, positionIn(SOURCE, offset));
+		assert.ok(first.range, 'the @ completion carries no replace range');
+		// The range starts after the sigil, so the `@` is left alone.
+		const sigil = offsetOf(SOURCE, first.range.start) - 1;
+		assert.equal(SOURCE[sigil], '@');
+		assert.equal(first.range.end.character, positionIn(SOURCE, offset).character);
+	});
+
+	it('hovers a content id as a content id, not as an undeclared name', () => {
+		// `@copper` parses as an identifier, so a naive index claims the user
+		// typed a name that does not exist. It is a content id.
+		const shown = hover(document, positionIn(SOURCE, SOURCE.indexOf('@copper') + 3));
+		assert.ok(shown, 'no hover for a content id');
+		assert.match(shown.contents, /@copper/);
+		assert.match(shown.contents, /item/);
+	});
+
+	it('offers keywords on an empty line', () => {
+		const offset = SOURCE.indexOf('\tint s = total');
+		const labels = new Set(complete(document, positionIn(SOURCE, offset)).map(item => item.label));
+		assert.ok(labels.has('if'), 'no keywords offered');
+		assert.ok(labels.has('while'), 'no keywords offered');
+	});
+
+	it('does not offer a struct field as a bare name', () => {
+		// `x` is only nameable through an object, so offering it bare would
+		// suggest source that does not compile.
+		const offset = SOURCE.indexOf('\tint s = total');
+		const labels = new Set(complete(document, positionIn(SOURCE, offset)).map(item => item.label));
+		assert.ok(!labels.has('x'), 'a field was offered as a top-level name');
+	});
+});
+
+describe('outline', () => {
+	it('lists file-scope declarations in source order', () => {
+		const listed = outline(document);
+		assert.deepEqual(
+			listed.map(symbol => symbol.name),
+			['point', 'total', 'main']
+		);
+		assert.equal(listed.find(symbol => symbol.name === 'point')?.kind, 'type');
+		assert.equal(listed.find(symbol => symbol.name === 'total')?.kind, 'function');
+	});
+
+	it('leaves locals and parameters out', () => {
+		const names = outline(document).map(symbol => symbol.name);
+		for (const local of ['p', 's', 'a', 'b']) {
+			assert.ok(!names.includes(local), `${local} should not be in the outline`);
+		}
+	});
+
+	it('shows a function as `int total(int, int)`', () => {
+		const total = outline(document).find(symbol => symbol.name === 'total');
+		assert.equal(total?.detail, 'int(int, int)');
+	});
+});
+
+describe('overloads', () => {
+	// Only the two-argument overload is called. Calling both arities crashes the
+	// compiler's semantic analyser (a pre-existing bug: `visitFunctionCall` reads
+	// a missing property and the whole AST comes back null with no diagnostics at
+	// all), so a fixture that does that would prove nothing about overloads.
+	const OVERLOADS = `int add(int a, int b) {
+	return a + b;
+}
+
+int add(int a, int b, int c) {
+	return a + b + c;
+}
+
+int main() {
+	return add(1, 2);
+}
+`;
+
+	it('indexes each overload under the name the user wrote', async () => {
+		const response = await analyse(request(OVERLOADS), host);
+		assert.ok(response.index);
+		const adds = response.index.symbols.filter(symbol => symbol.name === 'add');
+		assert.equal(adds.length, 2, 'expected both overloads');
+		// The compiler renames the second to `add__ov1`; the user must not see that.
+		assert.deepEqual(
+			adds.map(symbol => symbol.type),
+			['int(int, int)', 'int(int, int, int)'],
+			'each overload keeps its own signature'
+		);
+		for (const add of adds) {
+			assert.equal(
+				OVERLOADS.slice(offsetOf(OVERLOADS, add.range.start), offsetOf(OVERLOADS, add.range.start) + 3),
+				'add',
+				'an overload is not declared over its own name'
+			);
+		}
+	});
+
+	it('does not offer `add__ov1` in completion', async () => {
+		const response = await analyse(request(OVERLOADS), host);
+		const overloaded: IndexedDocument = { uri: URI, index: response.index!, text: OVERLOADS };
+		const labels = complete(overloaded, positionIn(OVERLOADS, OVERLOADS.indexOf('return add'))).map(
+			item => item.label
+		);
+		assert.ok(labels.includes('add'));
+		assert.ok(!labels.some(label => label.startsWith('add__')), 'the internal overload name leaked');
+	});
+});
+
+describe('a file that does not compile', () => {
+	it('still produces an index, so completion keeps working', async () => {
+		// This is the whole reason `analyze()` returns the AST even on failure
+		// (patch 0001): the user is mid-edit most of the time.
+		const broken = `int helper(int a) {
+	return a;
+}
+
+int main() {
+	helper(1);
+	return undefinedThing;
+}
+`;
+		const response = await analyse(request(broken), host);
+		assert.ok(response.diagnostics.length > 0, 'expected diagnostics');
+		const brokenDocument: IndexedDocument = {
+			uri: URI,
+			text: broken,
+			index: response.index!,
+		};
+		const found = definition(
+			brokenDocument,
+			positionIn(broken, broken.indexOf('helper(1)') + 2),
+			toUri
+		);
+		assert.equal(found?.uri, URI, 'could not resolve a name in a file with errors');
+		assert.equal(broken.slice(offsetOf(broken, found!.range.start), offsetOf(broken, found!.range.start) + 6), 'helper');
+	});
+
+	it('leaves an undeclared name unresolved rather than guessing', async () => {
+		const broken = `int main() {
+	return undefinedThing;
+}
+`;
+		const response = await analyse(request(broken), host);
+		const brokenDocument: IndexedDocument = { uri: URI, text: broken, index: response.index! };
+		const position = positionIn(broken, broken.indexOf('undefinedThing') + 2);
+		assert.equal(definition(brokenDocument, position, toUri), null);
+		// Hover says so plainly rather than inventing a type.
+		assert.match(hover(brokenDocument, position)?.contents ?? '', /Not declared/);
+	});
+});
+
+describe('types the compiler resolves rather than records', () => {
+	const TYPED = `struct vec {
+	int x;
+	int y;
+};
+
+typedef struct vec vec_t;
+
+int sum(vec a, vec_t *b) {
+	b->x = 1;
+	a.y = 2;
+	return a.x + b->y;
+}
+`;
+
+	it('resolves a typedef to the struct it names, for hover and completion', async () => {
+		const response = await analyse(request(TYPED), host);
+		assert.ok(response.index, 'no index');
+		const document2: IndexedDocument = { uri: URI, text: TYPED, index: response.index! };
+		// `b->x`: three characters in, the cursor is on the member.
+		const position = positionIn(TYPED, TYPED.indexOf('b->x') + 3);
+		const shown = hover(document2, position);
+		assert.ok(shown, 'no hover for a member of a pointer to a typedef`d struct');
+		assert.match(shown.contents, /Field of `vec`/);
+	});
+
+	it('offers members of a typedef`d struct after an arrow', async () => {
+		const response = await analyse(request(TYPED), host);
+		const document2: IndexedDocument = { uri: URI, text: TYPED, index: response.index! };
+		// `b->x` starts at this offset, so `+ 3` is the member and `+ 4` is just
+		// past it: the two positions a cursor can actually be at.
+		const member = TYPED.indexOf('b->x');
+		for (const offset of [member + 3, member + 4]) {
+			const items = complete(document2, positionIn(TYPED, offset));
+			assert.deepEqual(
+				items.map(item => item.label).sort(),
+				['x', 'y'],
+				`a pointer to a typedef'd struct offered the wrong members at ${offset}`
+			);
+		}
+	});
+
+	it('indexes a typedef as a type, with the type the user wrote', async () => {
+		const response = await analyse(request(TYPED), host);
+		const types = response.index!.symbols.filter(symbol => symbol.kind === 'type');
+		assert.deepEqual(
+			types.map(symbol => `${symbol.name} : ${symbol.type}`),
+			['vec : struct', 'vec_t : typedef struct vec']
+		);
+	});
+});
+
+/** Apply LSP text edits to a source, in document order. */
+function applyEdits(
+	text: string,
+	edits: ReadonlyArray<{ range: { start: { line: number; character: number }; end: { line: number; character: number } }; newText: string }>
+): string {
+	const ordered = [...edits].sort((a, b) => offsetOf(text, a.range.start) - offsetOf(text, b.range.start));
+	let result = '';
+	let cursor = 0;
+	for (const edit of ordered) {
+		const start = offsetOf(text, edit.range.start);
+		result += text.slice(cursor, start) + edit.newText;
+		cursor = offsetOf(text, edit.range.end);
+	}
+	return result + text.slice(cursor);
+}

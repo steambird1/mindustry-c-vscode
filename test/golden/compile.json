@@ -1,0 +1,564 @@
+{
+	"compiler": "a23e3c9",
+	"files": {
+		"sample1.c": {
+			"success": true,
+			"hash": "7272ba342f27",
+			"lines": 122,
+			"errors": [],
+			"warnings": [
+				"[object Object]:undefined Condition always true in if statement"
+			],
+			"fatal": null
+		},
+		"test1.c": {
+			"success": true,
+			"hash": "581ef177c2eb",
+			"lines": 160,
+			"errors": [],
+			"warnings": [
+				"34:8 Condition expression should be of type 'bool'",
+				"37:6 Condition expression should be of type 'bool'",
+				"41:10 Loop condition should be of type 'bool'",
+				"[object Object]:undefined Condition always true in if statement",
+				"[object Object]:undefined Condition always true in if statement",
+				"[object Object]:undefined Loop never executed (while(false))",
+				"[object Object]:undefined Loop never executed (while(false))",
+				"[object Object]:undefined Loop never executed (while(false))"
+			],
+			"fatal": null
+		},
+		"test10.c": {
+			"success": true,
+			"hash": "16febef7218a",
+			"lines": 160,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test10a.c": {
+			"success": true,
+			"hash": "48f11b4403da",
+			"lines": 34,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test11.c": {
+			"success": true,
+			"hash": "045c8ff94f77",
+			"lines": 51,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test11a.c": {
+			"success": true,
+			"hash": "a25d26d2c49b",
+			"lines": 92,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test12.c": {
+			"success": true,
+			"hash": "8dab414708dd",
+			"lines": 103,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test13.c": {
+			"success": true,
+			"hash": "e86498cc5e80",
+			"lines": 48,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test14.c": {
+			"success": true,
+			"hash": "aaeed7066284",
+			"lines": 58,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test15.c": {
+			"success": true,
+			"hash": "4c71e4b09042",
+			"lines": 203,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test15a.c": {
+			"success": true,
+			"hash": "cf03c8079eff",
+			"lines": 146,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test15b.c": {
+			"success": true,
+			"hash": "d755fc7c6837",
+			"lines": 203,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test16.c": {
+			"success": true,
+			"hash": "5e1e645cb5f5",
+			"lines": 31,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test16b.c": {
+			"success": true,
+			"hash": "13235a30e09a",
+			"lines": 52,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test16c.c": {
+			"success": true,
+			"hash": "8cdbd15ab9dc",
+			"lines": 62,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test17.c": {
+			"success": true,
+			"hash": "64e96cd174cc",
+			"lines": 169,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test18.c": {
+			"success": true,
+			"hash": "d26e250dc213",
+			"lines": 97,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test19.c": {
+			"success": true,
+			"hash": "4aa5da94419d",
+			"lines": 54,
+			"errors": [],
+			"warnings": [
+				"7:8 Condition expression should be of type 'bool'"
+			],
+			"fatal": null
+		},
+		"test1a.c": {
+			"success": true,
+			"hash": "638f7947ab05",
+			"lines": 138,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test1b.c": {
+			"success": true,
+			"hash": "965ec0e7532b",
+			"lines": 94,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test1c.c": {
+			"success": true,
+			"hash": "e806c28cd115",
+			"lines": 80,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test1d.c": {
+			"success": true,
+			"hash": "45092cdb2164",
+			"lines": 38,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test2.c": {
+			"success": true,
+			"hash": "2d4481732c99",
+			"lines": 30,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test20.c": {
+			"success": true,
+			"hash": "31ee46ad9316",
+			"lines": 36,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test20a.c": {
+			"success": true,
+			"hash": "72b6d9e562fe",
+			"lines": 33,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test20b.c": {
+			"success": true,
+			"hash": "2c892b3aeae7",
+			"lines": 32,
+			"errors": [],
+			"warnings": [
+				"[object Object]:undefined Condition always true in if statement"
+			],
+			"fatal": null
+		},
+		"test20c.c": {
+			"success": true,
+			"hash": "bf7acdd67002",
+			"lines": 42,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test20d.c": {
+			"success": true,
+			"hash": "3e7f8a72c6c0",
+			"lines": 31,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test20e.c": {
+			"success": true,
+			"hash": "85e659527fa7",
+			"lines": 31,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test20f.c": {
+			"success": true,
+			"hash": "c2fca4284c59",
+			"lines": 31,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test22.c": {
+			"success": true,
+			"hash": "a740473c81b9",
+			"lines": 202,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test23.c": {
+			"success": true,
+			"hash": "b70d29ceb478",
+			"lines": 40,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test24.c": {
+			"success": true,
+			"hash": "a079945d5d7a",
+			"lines": 55,
+			"errors": [],
+			"warnings": [
+				"2:24 Condition expression should be of type 'bool'"
+			],
+			"fatal": null
+		},
+		"test26.c": {
+			"success": true,
+			"hash": "02a242c30a23",
+			"lines": 47,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test27.c": {
+			"success": true,
+			"hash": "9f7c9fd5c60c",
+			"lines": 36,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test27a.c": {
+			"success": true,
+			"hash": "6685fc73919b",
+			"lines": 47,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test27b.c": {
+			"success": true,
+			"hash": "2ad6b4fb0e09",
+			"lines": 39,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test27c.c": {
+			"success": true,
+			"hash": "45949d05cc60",
+			"lines": 46,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test27d.c": {
+			"success": true,
+			"hash": "add921cd1d37",
+			"lines": 47,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test27e.c": {
+			"success": true,
+			"hash": "7587a3bff48c",
+			"lines": 47,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test27f.c": {
+			"success": true,
+			"hash": "a96ef9ce52dd",
+			"lines": 31,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test27g.c": {
+			"success": true,
+			"hash": "d17dcedfbda0",
+			"lines": 37,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test29.c": {
+			"success": true,
+			"hash": "5f2313f136d6",
+			"lines": 95,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test29a.c": {
+			"success": true,
+			"hash": "1f2db2a422cd",
+			"lines": 81,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test29b.c": {
+			"success": true,
+			"hash": "db48dc0b1c9a",
+			"lines": 50,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test30.c": {
+			"success": true,
+			"hash": "d75bd0ded305",
+			"lines": 127,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test31.c": {
+			"success": true,
+			"hash": "0fd7ce883277",
+			"lines": 153,
+			"errors": [],
+			"warnings": [
+				"34:9 Condition expression should be of type 'bool'",
+				"38:13 Condition expression should be of type 'bool'",
+				"69:9 Condition expression should be of type 'bool'"
+			],
+			"fatal": null
+		},
+		"test32.c": {
+			"success": true,
+			"hash": "8a4e751c5746",
+			"lines": 39,
+			"errors": [],
+			"warnings": [
+				"[object Object]:undefined Condition always true in if statement"
+			],
+			"fatal": null
+		},
+		"test34.c": {
+			"success": true,
+			"hash": "8cdf2b0d02da",
+			"lines": 38,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test35.c": {
+			"success": true,
+			"hash": "5dd7dcc72e56",
+			"lines": 114,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test36.c": {
+			"success": true,
+			"hash": "b6aa9acff8f9",
+			"lines": 37,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test36a.c": {
+			"success": true,
+			"hash": "7e22101f6c45",
+			"lines": 43,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test36b.c": {
+			"success": true,
+			"hash": "41b81dc35cb2",
+			"lines": 76,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test36c.c": {
+			"success": true,
+			"hash": "94bb0cad774c",
+			"lines": 130,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test37.c": {
+			"success": true,
+			"hash": "6de82b43ff7e",
+			"lines": 88,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test37a.c": {
+			"success": true,
+			"hash": "28393f6db3d0",
+			"lines": 90,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test4.c": {
+			"success": true,
+			"hash": "2d4481732c99",
+			"lines": 30,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test6.c": {
+			"success": true,
+			"hash": "b2aa5dabb062",
+			"lines": 38,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test7a.c": {
+			"success": true,
+			"hash": "a17afc83ab4a",
+			"lines": 68,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test7b.c": {
+			"success": true,
+			"hash": "2d4481732c99",
+			"lines": 30,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test7c.c": {
+			"success": true,
+			"hash": "ac02c2969d84",
+			"lines": 51,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test7d.c": {
+			"success": true,
+			"hash": "fb94e545cf0f",
+			"lines": 54,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test7e.c": {
+			"success": true,
+			"hash": "5c20b176dd09",
+			"lines": 190,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test7f.c": {
+			"success": true,
+			"hash": "539bb8ab022c",
+			"lines": 55,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test7h.c": {
+			"success": true,
+			"hash": "c6a6fab20529",
+			"lines": 34,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test8.c": {
+			"success": true,
+			"hash": "a89a3fab8544",
+			"lines": 77,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test9.c": {
+			"success": true,
+			"hash": "e78c18adbf63",
+			"lines": 70,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		}
+	}
+}
