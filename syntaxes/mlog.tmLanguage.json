@@ -1,0 +1,57 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "Mindustry Logic",
+	"scopeName": "source.mlog",
+	"fileTypes": [
+		"mlog"
+	],
+	"patterns": [
+		{
+			"name": "comment.line.double-slash.mlog",
+			"match": "^//.*$",
+			"scope": "comment.line.double-slash.mlog"
+		},
+		{
+			"name": "meta.instruction.mlog",
+			"match": "^\\s*([a-z]+)(.*)$",
+			"captures": {
+				"1": {
+					"name": "keyword.operator.mlog"
+				},
+				"2": {
+					"name": "meta.arguments.mlog"
+				}
+			}
+		},
+		{
+			"name": "keyword.operator.mlog",
+			"match": "\\b(printflush|printchar|drawflush|ucontrol|stricteq|vecalias|getlink|control|ulocate|format|sensor|uradar|lookup|byname|memcpy|remote|veccpy|print|radar|ubind|write|adiff|floor|memsp|draw|wait|stop|jump|read|acos|asin|atan|ceil|rand|sqrt|asm|set|end|abs|cos|max|min|pow|sin|tan|op)\\b",
+			"scope": "keyword.operator.mlog"
+		},
+		{
+			"name": "string.quoted.double.mlog",
+			"match": "\"[^\"]*\"",
+			"scope": "string.quoted.double.mlog"
+		},
+		{
+			"name": "constant.character.mlog",
+			"match": "'[^']'",
+			"scope": "constant.character.mlog"
+		},
+		{
+			"name": "constant.numeric.mlog",
+			"match": "(?<![\\w-])-?\\d+(\\.\\d+)?\\b",
+			"scope": "constant.numeric.mlog"
+		},
+		{
+			"name": "variable.language.link.mlog",
+			"match": "\\b[a-zA-Z_][A-Za-z0-9_]*\\b",
+			"scope": "variable.language.link.mlog"
+		},
+		{
+			"name": "punctuation.separator.mlog",
+			"match": "[ \\t]+",
+			"scope": "punctuation.separator.mlog"
+		}
+	]
+}

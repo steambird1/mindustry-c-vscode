@@ -1,0 +1,272 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "Mindustry-C",
+	"scopeName": "source.mlgc",
+	"fileTypes": [
+		"mlgc"
+	],
+	"patterns": [
+		{
+			"include": "#comments"
+		},
+		{
+			"include": "#directives"
+		},
+		{
+			"include": "#asm"
+		},
+		{
+			"include": "#strings"
+		},
+		{
+			"include": "#numbers"
+		},
+		{
+			"include": "#content-constants"
+		},
+		{
+			"include": "#processor-vars"
+		},
+		{
+			"include": "#instructions"
+		},
+		{
+			"include": "#builtin-functions"
+		},
+		{
+			"include": "#types"
+		},
+		{
+			"include": "#keywords"
+		},
+		{
+			"include": "#operators"
+		}
+	],
+	"repository": {
+		"comments": {
+			"patterns": [
+				{
+					"name": "comment.line.double-slash.mlgc",
+					"match": "//.*$",
+					"scope": "comment.line.double-slash.mlgc"
+				},
+				{
+					"name": "comment.block.mlgc",
+					"match": "/\\*",
+					"scope": {
+						"name": "comment.block.mlgc",
+						"begin": "/\\*",
+						"end": "\\*/"
+					}
+				}
+			]
+		},
+		"directives": {
+			"name": "meta.preprocessor.mlgc",
+			"begin": "(?<=^|\\n)(\\s*)(#)\\s*(include|define|undef|if|ifdef|ifndef|else|elif|endif|pragma)\\b",
+			"beginCaptures": {
+				"2": {
+					"name": "punctuation.definition.keyword.mlgc"
+				},
+				"3": {
+					"name": "keyword.control.directive.mlgc"
+				}
+			},
+			"end": "(?<!\\\\)(?=\\n|$)",
+			"patterns": [
+				{
+					"include": "#directive-arguments"
+				},
+				{
+					"name": "constant.character.string.mlgc",
+					"match": "\"[^\"]*\""
+				}
+			]
+		},
+		"directive-arguments": {
+			"patterns": [
+				{
+					"name": "keyword.control.directive.mlgc",
+					"match": "\\b(include|define|undef|pragma)\\b"
+				},
+				{
+					"name": "constant.numeric.mlgc",
+					"match": "\\b\\d+(\\.\\d+)?\\b"
+				},
+				{
+					"name": "entity.name.tag.mlgc",
+					"match": "@[A-Za-z_][A-Za-z0-9_]*"
+				}
+			]
+		},
+		"asm": {
+			"name": "meta.asm.mlgc",
+			"begin": "\\b(asm)\\s*\\(",
+			"beginCaptures": {
+				"1": {
+					"name": "keyword.control.asm.mlgc"
+				}
+			},
+			"end": "\\)",
+			"patterns": [
+				{
+					"name": "string.quoted.other.mlgc",
+					"match": "\"[^\"]*\""
+				},
+				{
+					"name": "support.function.mlog.mlgc",
+					"match": "\\b[a-z]+\\b"
+				}
+			]
+		},
+		"strings": {
+			"patterns": [
+				{
+					"name": "string.quoted.double.mlgc",
+					"match": "\"",
+					"scope": {
+						"name": "string.quoted.double.mlgc",
+						"begin": "\"",
+						"end": "\"",
+						"patterns": [
+							{
+								"include": "#escapes"
+							}
+						]
+					}
+				},
+				{
+					"name": "string.quoted.single.mlgc",
+					"match": "'",
+					"scope": {
+						"name": "string.quoted.single.mlgc",
+						"begin": "'",
+						"end": "'",
+						"patterns": [
+							{
+								"include": "#escapes"
+							}
+						]
+					}
+				}
+			]
+		},
+		"escapes": {
+			"patterns": [
+				{
+					"name": "constant.character.escape.mlgc",
+					"match": "\\\\.",
+					"scope": "constant.character.escape.mlgc"
+				}
+			]
+		},
+		"numbers": {
+			"patterns": [
+				{
+					"name": "constant.numeric.hex.mlgc",
+					"match": "\\b0[xX][0-9a-fA-F]+\\b",
+					"scope": "constant.numeric.hex.mlgc"
+				},
+				{
+					"name": "constant.numeric.mlgc",
+					"match": "\\b\\d+(\\.\\d+)?([eE][+-]?\\d+)?[fFlLuU]*\\b",
+					"scope": "constant.numeric.mlgc"
+				}
+			]
+		},
+		"content-constants": {
+			"patterns": [
+				{
+					"name": "constant.language.content-item.mlgc",
+					"match": "(?<![\\w@])@(@blast-compound|@phase-fabric|@surge-alloy|@plastanium|@metaglass|@spore-pod|@beryllium|@graphite|@titanium|@pyratite|@tungsten|@thorium|@silicon|@carbide|@copper|@scrap|@oxide|@lead|@sand|@coal)\\b",
+					"scope": "constant.language.item.mlgc"
+				},
+				{
+					"name": "constant.language.content-liquid.mlgc",
+					"match": "(?<![\\w@])@(@cryofluid|@neoplasm|@hydrogen|@cyanogen|@nitrogen|@arkycite|@gallium|@water|@ozone|@slag|@oil)\\b",
+					"scope": "constant.language.liquid.mlgc"
+				},
+				{
+					"name": "constant.language.content-unit.mlgc",
+					"match": "(?<![\\w@])@(@fortress|@antumbra|@vanquish|@anthicus|@collaris|@scepter|@crawler|@spiroct|@toxopid|@horizon|@eclipse|@aegires|@navanax|@precept|@conquer|@obviate|@disrupt|@emanate|@dagger|@pulsar|@quasar|@corvus|@arkyid|@zenith|@retusa|@oxynoe|@cyerce|@cleroi|@incite|@reign|@atrax|@flare|@risso|@minke|@bryde|@omura|@alpha|@gamma|@stell|@locus|@merui|@tecta|@elude|@avert|@quell|@evoke|@mace|@nova|@vela|@mono|@poly|@mega|@quad|@beta|@oct|@sei)\\b",
+					"scope": "constant.language.unit.mlgc"
+				},
+				{
+					"name": "constant.language.content-block.mlgc",
+					"match": "(?<![\\w@])@(@multiplicative-reconstructor|@reinforced-liquid-container|@chemical-combustion-chamber|@reinforced-payload-conveyor|@reinforced-surge-wall-large|@interplanetary-accelerator|@reinforced-liquid-junction|@exponential-reconstructor|@reinforced-bridge-conduit|@reinforced-payload-router|@large-payload-mass-driver|@reinforced-liquid-router|@atmospheric-concentrator|@tetrative-reconstructor|@unit-cargo-unload-point|@differential-generator|@additive-reconstructor|@reinforced-liquid-tank|@large-shield-projector|@basic-assembler-module|@plastanium-compressor|@plastanium-wall-large|@reinforced-surge-wall|@small-heat-redirector|@combustion-generator|@cyanogen-synthesizer|@reinforced-container|@beryllium-wall-large|@titanium-wall-large|@scrap-wall-gigantic|@overdrive-projector|@plastanium-conveyor|@large-logic-display|@silicon-arc-furnace|@pyrolysis-generator|@small-deconstructor|@tungsten-wall-large|@payload-mass-driver|@large-cliff-crusher|@advanced-launch-pad|@thorium-wall-large|@reinforced-conduit|@carbide-wall-large|@prime-refabricator|@reinforced-message|@tile-logic-display|@copper-wall-large|@titanium-conveyor|@thermal-generator|@solar-panel-large|@large-constructor|@turbine-condenser|@oxidation-chamber|@large-plasma-bore|@phase-synthesizer|@unit-cargo-loader|@unit-repair-tower|@tank-refabricator|@mech-refabricator|@ship-refabricator|@neoplasia-reactor|@silicon-crucible|@phase-wall-large|@surge-wall-large|@scrap-wall-large|@armored-conveyor|@power-node-large|@mechanical-drill|@payload-conveyor|@liquid-container|@payload-unloader|@carbide-crucible|@slag-incinerator|@reinforced-vault|@shield-projector|@silicon-smelter|@cryofluid-mixer|@coal-centrifuge|@plastanium-wall|@scrap-wall-huge|@force-projector|@bridge-conveyor|@inverted-sorter|@mechanical-pump|@liquid-junction|@steam-generator|@thorium-reactor|@pneumatic-drill|@water-extractor|@core-foundation|@micro-processor|@logic-processor|@hyper-processor|@reinforced-pump|@slag-centrifuge|@electric-heater|@regen-projector|@heat-redirector|@world-processor|@tank-fabricator|@mech-fabricator|@ship-fabricator|@shockwave-tower|@graphite-press|@pyratite-mixer|@mend-projector|@overdrive-dome|@phase-conveyor|@underflow-gate|@plated-conduit|@bridge-conduit|@impact-reactor|@command-center|@ground-factory|@payload-router|@payload-source|@payload-loader|@surge-conveyor|@core-acropolis|@surge-crucible|@vent-condenser|@tank-assembler|@beryllium-wall|@eruption-drill|@ship-assembler|@mech-assembler|@underflow-duct|@titanium-wall|@overflow-gate|@pulse-conduit|@liquid-router|@phase-conduit|@battery-large|@rtg-generator|@oil-extractor|@naval-factory|@repair-turret|@liquid-source|@logic-display|@deconstructor|@cliff-crusher|@duct-unloader|@surge-smelter|@overflow-duct|@tungsten-wall|@shielded-wall|@world-message|@phase-weaver|@disassembler|@thorium-wall|@core-nucleus|@repair-point|@power-source|@payload-void|@core-bastion|@impact-drill|@surge-router|@core-citadel|@heat-reactor|@impulse-pump|@electrolyzer|@phase-heater|@carbide-wall|@armored-duct|@flux-reactor|@world-switch|@large-canvas|@multi-press|@blast-mixer|@spore-press|@incinerator|@copper-wall|@distributor|@mass-driver|@duct-router|@duct-bridge|@rotary-pump|@liquid-tank|@surge-tower|@solar-panel|@laser-drill|@blast-drill|@air-factory|@item-source|@liquid-void|@illuminator|@memory-cell|@memory-bank|@constructor|@plasma-bore|@build-tower|@slag-heater|@heat-source|@heat-router|@landing-pad|@pulverizer|@phase-wall|@surge-wall|@door-large|@scrap-wall|@shock-mine|@power-node|@cultivator|@core-shard|@foreshadow|@power-void|@launch-pad|@beam-tower|@world-cell|@blast-door|@separator|@container|@item-void|@beam-node|@sublimate|@beam-link|@conveyor|@junction|@unloader|@parallax|@meltdown|@thruster|@disperse|@conduit|@battery|@scatter|@swarmer|@segment|@tsunami|@cyclone|@spectre|@message|@diffuse|@afflict|@melter|@mender|@sorter|@router|@scorch|@lancer|@ripple|@switch|@breach|@canvas|@lustre|@scathe|@malign|@diode|@vault|@salvo|@titan|@radar|@smite|@kiln|@door|@duct|@hail|@wave|@fuse|@duo|@arc)\\b",
+					"scope": "constant.language.block.mlgc"
+				}
+			]
+		},
+		"processor-vars": {
+			"patterns": [
+				{
+					"name": "variable.language.processor.mlgc",
+					"match": "@\\b(this|thisx|thisy|links|ipt|pi|e|degToRad|radToDeg|time|tick|second|minute|waveNumber|waveTime|mapw|maph|server|client|clientLocale|clientName|clientTeam|clientUnit|clientMobile|blockCount|unitCount|itemCount|liquidCount|unit)\\b",
+					"scope": "variable.language.processor.mlgc"
+				},
+				{
+					"name": "variable.other.constant.mlgc",
+					"match": "@[A-Za-z_][A-Za-z0-9_]*",
+					"scope": "variable.other.constant.mlgc"
+				}
+			]
+		},
+		"instructions": {
+			"patterns": [
+				{
+					"name": "keyword.control.instruction.mlgc",
+					"match": "\\b(printflush|printchar|drawflush|ucontrol|getlink|control|ulocate|format|sensor|uradar|lookup|print|radar|ubind|write|draw|wait|stop|jump|read|asm|set|end|op)\\b(?=\\s*\\()",
+					"scope": "keyword.control.instruction.mlgc"
+				}
+			]
+		},
+		"builtin-functions": {
+			"patterns": [
+				{
+					"name": "support.function.builtin.mlgc",
+					"match": "\\b(printflush|drawflush|printchar|stricteq|ucontrol|vecalias|control|getlink|ulocate|byname|format|lookup|memcpy|remote|sensor|uradar|veccpy|adiff|floor|memsp|print|radar|ubind|write|acos|asin|atan|ceil|draw|jump|rand|read|sqrt|stop|wait|abs|asm|cos|end|max|min|pow|set|sin|tan|op)\\b(?=\\s*\\()",
+					"scope": "support.function.builtin.mlgc"
+				}
+			]
+		},
+		"types": {
+			"patterns": [
+				{
+					"name": "storage.type.mlgc",
+					"match": "\\b(content_t|pdlist_t|widthof|device|null_t|inline|byname|remote|false|bool|auto|near|true|null|10|11|12|0|1|2|3|4|5|6|7|8|9)\\b",
+					"scope": "storage.type.mlgc"
+				},
+				{
+					"name": "storage.type.pointer.mlgc",
+					"match": "(?<=\\*)\\s*(?=const\\b)",
+					"scope": "storage.type.pointer.mlgc"
+				}
+			]
+		},
+		"keywords": {
+			"patterns": [
+				{
+					"name": "keyword.control.mlgc",
+					"match": "\\b(continue|register|unsigned|volatile|default|widthof|typedef|byname|remote|double|extern|inline|return|signed|sizeof|static|struct|switch|break|const|false|float|short|union|while|auto|bool|case|char|else|enum|goto|long|near|true|void|null|for|int|do|if)\\b",
+					"scope": "keyword.control.mlgc"
+				}
+			]
+		},
+		"operators": {
+			"patterns": [
+				{
+					"name": "keyword.operator.mlgc",
+					"match": "(?:\\+|-|\\*|/|%|=|==|!=|<|<=|>|>=|&&|\\|\\||!|&|\\||\\^|~|<<|>>|\\+=|-=|\\*=|/=|%=|<<=|>>=|&=|\\|=|\\^=|\\+\\+|--|\\.|->)",
+					"scope": "keyword.operator.mlgc"
+				},
+				{
+					"name": "keyword.operator.mlgc",
+					"match": "(?:;|,|\\.|\\?|\\(|\\)|\\[|\\]|\\{|\\})",
+					"scope": "keyword.operator.mlgc"
+				}
+			]
+		}
+	}
+}
