@@ -1,5 +1,5 @@
 diff --git a/mindc.js b/mindc.js
-index 4e896b5..819792b 100644
+index 4e896b5..e713591 100644
 --- a/mindc.js
 +++ b/mindc.js
 @@ -342,10 +342,18 @@ export class Compiler {
@@ -25,7 +25,7 @@ index 4e896b5..819792b 100644
  
  			// Handle extensions here now
  			const extensions = [...this.embeddedExtensions, ...tokens.extraExtensions];
-@@ -522,6 +530,43 @@ export class Compiler {
+@@ -522,6 +530,47 @@ export class Compiler {
  			this.optimizer = new Optimizer(this);
  			this.codeGenerator = new CodeGenerator(this);
  
@@ -35,26 +35,30 @@ index 4e896b5..819792b 100644
 +    /**
 +     * 只做语法 + 语义分析（不优化、不生成代码）。给编辑器做实时诊断用。
 +     *
-+     * 返回的 `ast` 在没有错误时是语义分析后的 AST，可用于取符号表；出错时为 null。
-+     * @returns {Promise<{ast: any, errors: any[], warnings: any[]}>}
++     * `ast` 即使在有错误时也会返回（错误节点不完整，但符号表已经可用），
++     * 这样编辑器的补全 / 跳转在文件还没编译通过时依然工作。
++     * `ok` 表示这次分析本身通过了。
++     * @returns {Promise<{ast: any, ok: boolean, errors: any[], warnings: any[], fatalError?: string}>}
 +     */
 +    async analyze() {
 +        try {
 +            await this.prepare();
 +
-+            const ast = this.parser.parse();
-+            if (ast.errors.length) {
-+                return { ast: null, errors: this.getAllErrors(), warnings: this.getAllWarnings() };
++            const parsed = this.parser.parse();
++            if (parsed.errors.length) {
++                return { ast: parsed.ast, ok: false, errors: this.getAllErrors(), warnings: this.getAllWarnings() };
 +            }
-+            const analyzed = this.semanticAnalyzer.analyze(ast.ast);
++            const analyzed = this.semanticAnalyzer.analyze(parsed.ast);
 +            return {
-+                ast: analyzed.errors.length ? null : analyzed.ast,
++                ast: analyzed.ast,
++                ok: analyzed.errors.length == 0,
 +                errors: this.getAllErrors(),
 +                warnings: this.getAllWarnings()
 +            };
 +        } catch (error) {
 +            return {
 +                ast: null,
++                ok: false,
 +                errors: this.getAllErrors(),
 +                warnings: this.getAllWarnings(),
 +                fatalError: error.message + "\n" + error.stack

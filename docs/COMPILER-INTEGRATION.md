@@ -9,8 +9,8 @@ compiler is young and its internals move around, so the rule is:
 > runtime or patch the compiler — and write the patch down.
 
 This file is the record. It lists the public surface the extension relies on,
-the two patches applied on top, and what the adapter does when a patch is
-missing (they are all optional at runtime).
+the two patches applied on top, the AST quirks that had to be bridged, and what
+the adapter does when a patch is missing (they are all optional at runtime).
 
 ## Patches
 
@@ -29,9 +29,11 @@ git apply ../patches/0002-injectable-include-resolver.patch
 git apply -R ../patches/0001-expose-prepare-and-analyze.patch   # revert
 ```
 
-`0001` is verified behaviour-neutral: with it applied, all 80 files in
-`compiler/testers/*.c` produce byte-identical output, diagnostics and warnings
-(see `npm run test:golden` in this repository, which pins the hashes).
+Both are verified **behaviour-neutral**: with them applied, every file in
+`compiler/testers/*.c` produces byte-identical output, diagnostics and warnings
+compared to a compiler with them reverted. `npm run patches:verify` proves that
+on each run rather than trusting a review of the diff, and
+`npm run test:golden` pins the fingerprints.
 
 ### 0001 in detail
 
@@ -43,6 +45,10 @@ reformatting, so the diff stays reviewable) and adds `analyze()`, which is
 there are errors. `compile()` now begins with `await this.prepare();` and is
 otherwise untouched.
 
+`analyze()` deliberately returns the AST even when `ok` is false: a user is
+mid-edit most of the time, and a broken file still has to offer completion and
+go-to-definition.
+
 ### 0002 in detail
 
 `Lexer` takes an optional fifth argument. When `includeResolver` is a function,
@@ -53,16 +59,15 @@ compiler extension that the host already loaded). With no resolver the old HTTP
 path is used unchanged, so `main.html` keeps working.
 
 Tokens coming from an include carry `location.filename`, which is what lets the
-extension report diagnostics against the right file instead of against the
-includer.
+extension follow includes at all.
 
 ## Public surface the extension uses
 
 ```js
-import { Compiler }              from './mindc.js';            // compile(), prepare(), analyze()
+import { Compiler }              from './mindc.js';             // compile(), prepare(), analyze()
 import { MemoryBlock }           from './mindcGeneratorBase.js' // new MemoryBlock(name, size)
 import { AttributeClass }        from './mindcBase.js';         // config.get/setAttribute
-import { Lexer, KEYWORDS, SPECIAL_INSTRUCTIONS, OPERATORS, PUNCTUATORS }
+import { Lexer, TokenType, KEYWORDS, SPECIAL_INSTRUCTIONS, OPERATORS, PUNCTUATORS }
                                   from './mindcLexer.js';       // grammar + completion data
 import { CONTENT_ORDER, DEFAULT_CONTENT_IDS, DEFAULT_CONTENT_NAMES }
                                   from './mindcContent.js';     // @constant completion + colours
@@ -73,16 +78,40 @@ Result shapes the adapter relies on:
 | Value | Shape |
 | --- | --- |
 | `compile()` | `{ success, code, errors, warnings, fatalError? }` |
-| `analyze()` | `{ ast \| null, errors, warnings, fatalError? }` |
+| `analyze()` | `{ ast \| null, ok, errors, warnings, fatalError? }` |
 | a diagnostic | `{ message, line, column }` — 1-based, `line`/`column` may be absent |
 | a token | `{ type, value, raw, location: { line, column, index, filename? } }` |
 | `AttributeClass` | `getAttribute(k)`, `setAttribute(k, v)`, `hasAttribute(k)` |
 
+## How the compiler is loaded
+
+The compiler is ESM spread over a dozen files with no `package.json` of its own,
+so nothing can `import` it directly. `scripts/build.mjs` bundles it with esbuild
+into **`out/compiler/mindc.cjs`**, built from a synthetic entry that re-exports
+exactly the names the extension uses:
+
+| From | Re-exported |
+| --- | --- |
+| `mindc.js` | `Compiler`, `CompilerExtensionBase`, `defaultExtensions` |
+| `mindcBase.js` | `AttributeClass`, `ASTNodeType` |
+| `mindcGeneratorBase.js` | `MemoryBlock`, `MEMORY_RESERVE_SIZE` |
+| `mindcLexer.js` | `Lexer`, `TokenType` |
+
+That list is a **contract**. A compiler refactor that renames or drops one of
+those exports fails the build of `out/compiler/mindc.cjs` with a named error,
+instead of shipping an extension that throws at runtime. Adding a compiler name
+means touching exactly two things: that entry, and `CompilerModule` in
+`src/compiler/bridge.ts`.
+
+Build scripts and the test runner cannot go through the bundle — it is built out
+of the sources they are about to test — so `scripts/lib/load-compiler.mjs`
+bundles the compiler to a temporary ESM file, imports it, and deletes it.
+
 ## Reading the analyser without depending on it
 
-Language features (hover, go-to-definition, references, rename, completion) do
-not need a compiler change. After `analyze()`, `SemanticAnalyzer` has already
-linked **every** AST node to a `Scope` and resolved every named node:
+Language features (hover, go-to-definition, references, rename, completion and
+the outline) need no compiler change. After `analyze()`, `SemanticAnalyzer` has
+already linked every AST node to a `Scope` and resolved every named node:
 
 ```js
 const entry = node.scope.lookup(node.name);   // SymbolEntry | null
@@ -91,15 +120,121 @@ entry.type            // TypeInfo (or a function signature object)
 entry.location        // { line, column, index } of the declaration
 ```
 
-Verified on `compiler/testers/sample1.c`: 24 named nodes, 24 resolvable, 0
-unresolved. The adapter walks the AST once per analysis and materialises a flat
-`SymbolIndex` (see `src/compiler/symbols.ts`) so the server never touches a
-`Scope` object directly — if the compiler renames those fields, only the index
-builder changes.
+`src/compiler/symbols.ts` walks the analysed AST once per run and materialises
+plain data (`DocumentIndex`), so the server never touches a `Scope` object
+directly. If the compiler renames those fields, only that one file changes.
 
-`compiler/AnalysisWorker` snapshots the compiler on every request, so an
-analyser crash can only ever affect the worker; the supervisor respawns it and
-the user sees one "internal error" diagnostic instead of a frozen editor.
+### The AST is not shaped the way an editor wants it
+
+Every row below is a verified property of the compiler's AST, not a guess. Each
+one is bridged in `symbols.ts` rather than patched into the compiler, because a
+patch costs a review and a rebasing every time the compiler moves. If the
+compiler changes one of these, this is the list to re-check.
+
+| What the AST does | Why it is surprising | How it is handled |
+| --- | --- | --- |
+| A declaration's `location` is the **start of the statement** | `int total(int a)` reports the position of `int`, and a function's `SymbolEntry.location` does the same, so go-to-definition would land on the return type | The name is recovered from the source: for a function, the identifier in front of the parameter list's `(`; otherwise the first whole-word match after the reported position |
+| A struct definition's `type` is the bare string `'struct'` / `'union'` | The parser overwrites the node's type with the keyword | `typeDefinitions` is read up front by a dedicated pass, and the generic walk skips it |
+| A struct's name is on `name`, not `typeName` | Every *other* node that names a type puts it in `typeName`, so a generic "this node declares a type" rule fires on **every return type** and invents a type called `int` | Only `typeDefinitions` declares types |
+| A struct's members are untyped nodes whose `type` is a `TypeSpecifier` **object** | `node.type` is not a string, so any code that reads it as one gets `''` | Members are read from the struct definition, preferring the analyser-resolved member type |
+| A `MemberExpression`'s member identifier has `location: null`, no symbol and no `dataType` | The parser does not carry the token into the node at all | The position comes from a bounded scan of the text after the object; the type and declaration come from the struct the object resolved to |
+| A pointer's `members` is `[]`, with the real members on `pointerTo` | Reading `.members` alone silently loses every member of a struct reached through a pointer or an array | Types are unwrapped through `pointerTo` before members are read |
+| The second and later overloads of a function are renamed `name__ov1` | The user never wrote that, and it must never reach completion or rename | Indexed under the source name, one entry per declaration, each with its own signature |
+| A parameter node has a `name` and a `location` but **no `symbol`** | Only the function's `Scope` can resolve it | The walk threads the nearest enclosing `Scope` down and resolves untyped named nodes through it |
+| Every node's `symbol` field is a flat `SymbolEntry` carrying the **same** name and location as the node it was resolved from | A walk that descends into it declares every parameter and variable a second time | `symbol` is never descended into |
+
+`DocumentIndex` carries one piece of information the compiler does not have: a
+field records the struct that declares it (`SymbolInfo.container`). Without it,
+the only way to say that `p.x` is a field of `point` — or to offer `point`'s
+members after `p.` — is to read the text in front of the dot.
+
+### Checking these claims against the compiler
+
+Every row in that table came from running the compiler, not from reading it. The
+tool for doing that again is `scripts/probe.mjs`, which bundles one `.mts` file
+with esbuild — TypeScript types and all — and runs it, so a probe can import the
+extension's own modules instead of re-deriving them:
+
+```sh
+node scripts/probe.mjs probe.mts
+```
+
+`probe.mts` is a scratch file and is not committed. A minimal one:
+
+```ts
+import { inspect } from 'node:util';
+import { analyze, makeMemoryBlocks } from './src/compiler/bridge';
+
+const run = await analyze({
+	source: 'struct point { int x; }; int main() { point p; p.x = 1; return 0; }',
+	target: {
+		targetVersion: 154.3,
+		memoryBlocks: makeMemoryBlocks([{ name: 'cell1', size: 64 }]),
+		includePaths: [],
+	},
+	filePath: '/project/main.mlgc',
+	readFile: () => null,
+});
+console.log(
+	inspect(run.ast, {
+		depth: 12,
+		// `parent` closes the tree into a cycle, so `JSON.stringify` throws on
+		// it, and `scope` is a live object with methods on it. Neither is worth
+		// printing. Drop `depth` to a couple of levels to find one field first.
+		filter: key => key !== 'parent' && key !== 'scope',
+	})
+);
+```
+
+When a probe turns a surprise into something the extension handles on purpose,
+it is worth keeping as a test in `test/index.test.ts` — the AST facts above are
+asserted there, so a compiler refactor that changes one fails the test suite
+instead of quietly breaking a feature.
+
+### Pre-existing compiler bugs found along the way
+
+These are the compiler's, not the extension's, and none is worked around
+silently:
+
+- **Calling a 3-argument overload when a 2-argument one exists crashes the
+  semantic analyser.** `visitFunctionCall` reads a property of `undefined`. The
+  crash is caught by `analyze()`'s own `try`, so the result is `ast: null` with
+  an *empty* error list. The index tolerates a null AST: a file that crashes the
+  analyser gets no symbols, but no wrong ones.
+- **A typedef's name is not in the program scope.** `scope.lookup('point_t')`
+  returns `null` even though `point_t` resolves everywhere else, so a typedef's
+  type is read out of the text between the `typedef` keyword and the name.
+- **The dialect has no `enum`.** `enum colour { red, green };` is a parse error
+  (`Expected variable name in declaration`).
+- **`@`-constants parse as identifiers named after the sigil** (`@copper`), with
+  no symbol. They are left out of the index — indexing them unresolved would
+  make hover claim a perfectly valid content id is undeclared — and answered from
+  the generated tables instead.
+- **esbuild warns about the compiler's own source**: a duplicate key
+  `POINTER_TYPE` in `mindcBase.js`, a duplicate `REMOTE` in `mindcLexer.js`, a
+  duplicate member `raw_replace` in `mindcInstruction.js`, and a duplicate
+  `AssignmentExpression` case in `mindcOptimizer.js`. `scripts/build.mjs`
+  collapses these into one `note:` line so they do not drown out our own
+  warnings.
+
+### Known limitation: which file a diagnostic belongs to
+
+A diagnostic's `line`/`column` is relative to the file the error was raised in,
+but the diagnostic does not say which file that is — only tokens carry
+`location.filename`. `src/compiler/diagnostics.ts` therefore attributes a
+diagnostic by matching its line and column against the token stream, which is
+exact when the error is on a token and approximate otherwise. An error inside a
+header can end up reported against the `#include` line of the including file.
+Doing this properly means the compiler putting the file on the diagnostic, which
+would be a third patch; it is worth doing if diagnostic attribution in headers
+becomes a problem.
+
+## Crash containment
+
+The analysis worker snapshots the compiler on every request, so an analyser
+crash can only ever affect the worker; the supervisor respawns it and the user
+sees one "internal error" diagnostic instead of a frozen editor. Builds run in a
+separate, cancellable worker, and exactly one build runs at a time.
 
 ## Build-time extraction
 
@@ -108,8 +243,10 @@ the user sees one "internal error" diagnostic instead of a frozen editor.
 - `syntaxes/mlgc.tmLanguage.json` — keyword, instruction, operator and
   `@content` rules generated from `KEYWORDS`, `SPECIAL_INSTRUCTIONS`,
   `OPERATORS`, `PUNCTUATORS`, `CONTENT_ORDER` and `DEFAULT_CONTENT_IDS`;
-- `src/compiler/generated/tables.json` — the same tables in a shape the
-  extension can import.
+- `src/compiler/generatedTables.ts` — the same tables in a shape the extension
+  can import.
 
-The compiler stays the single source of truth for its vocabulary: a new content
-id shows up in the grammar after `npm run gen` with no hand-editing.
+`npm run gen:check` fails if either is stale, so the grammar in the repository
+always matches the compiler it ships with. The compiler stays the single source
+of truth for its vocabulary: a new content id shows up in the grammar after
+`npm run gen` with no hand-editing.

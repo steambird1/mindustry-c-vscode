@@ -37,13 +37,15 @@ feature-detects both and falls back (see COMPILER-INTEGRATION.md). Without
 ## Re-recording a patch after editing the compiler
 
 `scripts/record-compiler-patch.mjs` diffs a "before" and an "after" snapshot of
-a single file, so the recorded patch contains only that one edit:
+a single file, so the recorded patch contains only that one edit. The paths
+inside the diff are declared with `--paths`, so it applies inside `compiler/`
+even though the snapshots live elsewhere:
 
 ```sh
-cp compiler/mindc.js /tmp/before.js
-# ... edit compiler/mindc.js ...
-node scripts/record-compiler-patch.mjs /tmp/before.js compiler/mindc.js \
-     patches/0001-expose-prepare-and-analyze.patch --paths mindc.js
+node scripts/record-compiler-patch.mjs \
+     %TEMP%\prepatch\mindc.js compiler\mindc.js \
+     patches/0001-expose-prepare-and-analyze.patch \
+     --paths mindc.js
 ```
 
 Verify it round-trips before committing:
@@ -51,3 +53,17 @@ Verify it round-trips before committing:
 ```sh
 cd compiler && git apply --check ../patches/0001-expose-prepare-and-analyze.patch
 ```
+
+## Proving a patch changes no behaviour
+
+A patch that only exists to expose an API must not change what the compiler
+produces. That is checked mechanically rather than by reading the diff:
+
+```sh
+npm run patches:verify
+```
+
+This compiles every file in `compiler/testers/` twice — once with the patches
+applied, once with them reverted — and compares the generated code, the
+diagnostics and the warnings byte for byte. It is part of `npm run check`.
+
