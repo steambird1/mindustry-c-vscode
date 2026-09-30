@@ -1,0 +1,14 @@
+# --- build output ---
+node_modules/
+out/
+dist/
+*.vsix
+*.tsbuildinfo
+
+# --- the compiler bundle is generated from compiler/ ---
+# (nothing to ignore inside compiler/ itself; keep it pristine)
+
+# --- misc ---
+.DS_Store
+Thumbs.db
+*.log
