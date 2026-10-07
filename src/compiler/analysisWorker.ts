@@ -4,7 +4,8 @@
  * Runs in a `worker_threads` thread: the compiler is a single-threaded,
  * occasionally quadratic pile of loops, and a frozen extension host is not an
  * acceptable failure mode. A crash here takes down this thread only -- the
- * supervisor respawns it and reports one diagnostic.
+ * supervisor answers any request this thread was holding, so the document is
+ * told it went unchecked, and starts a fresh thread on the next one.
  *
  * Protocol (parent -> worker): AnalysisRequest
  *                            (worker -> parent): AnalysisResponse

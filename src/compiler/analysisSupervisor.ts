@@ -30,8 +30,16 @@ export class AnalysisWorkerHost {
 	private worker: Worker | null = null;
 	private readonly latest = new Map<string, number>();
 	private readonly timers = new Map<string, NodeJS.Timeout>();
+	/**
+	 * Requests posted to a thread and not yet answered, as id -> document uri.
+	 *
+	 * A request still sitting in its debounce timer is deliberately not here:
+	 * it has not been posted, so whatever thread exists next will take it.
+	 */
+	private readonly inFlight = new Map<number, string>();
 	private nextId = 1;
 	private crashes = 0;
+	private disposed = false;
 
 	constructor(private readonly options: AnalysisWorkerOptions) {}
 
@@ -78,9 +86,15 @@ export class AnalysisWorkerHost {
 			return;
 		}
 		worker.postMessage(request);
+		this.inFlight.set(request.id, request.uri);
 	}
 
 	private spawn(): Worker | null {
+		// Everything that creates a thread funnels through here, so refusing
+		// after a dispose is what stops one being created during teardown: the
+		// `exit` handler of the thread being terminated still fires, and it
+		// fires with a non-zero code.
+		if (this.disposed) return null;
 		if (this.worker) return this.worker;
 		try {
 			const worker = new Worker(this.options.workerPath, {
@@ -100,19 +114,50 @@ export class AnalysisWorkerHost {
 	}
 
 	private receive(response: AnalysisResponse): void {
+		this.inFlight.delete(response.id);
 		// A result older than what we are waiting for is dropped, so a slow run
 		// cannot overwrite a newer one.
 		if (this.latest.get(response.uri) !== response.id) return;
 		this.options.onResult(response);
 	}
 
-	/** Report everything in flight as failed, then start a fresh thread. */
+	/**
+	 * Report everything in flight as failed, then forget the thread.
+	 *
+	 * Forgetting rather than respawning is deliberate: `spawn()` runs on the
+	 * next request, so nothing has to be started here -- and a thread that died
+	 * because the bundle on disk is broken would otherwise be started again,
+	 * and again, with no request waiting for it.
+	 *
+	 * Failing the in-flight requests is the other half. A request still in its
+	 * debounce timer is left alone: it has not been posted, and the next thread
+	 * will take it. One already posted will never be answered, and without this
+	 * the document it belongs to keeps the previous run's diagnostics with
+	 * nothing to say they are no longer current -- the failure would appear
+	 * only in the output channel, and the file would look checked.
+	 */
 	private died(reason: string): void {
+		// Shutting down terminates the thread, and that fires an exit handler
+		// with a non-zero code: reporting it would blame a crash for the one
+		// thing that went right.
+		if (this.disposed) return;
 		this.worker = null;
 		this.crashes++;
 		const message = `The Mindustry-C analyser stopped unexpectedly (${reason}).`;
 		this.options.onCrash?.(message);
-		this.spawn();
+		this.failInFlight(message);
+	}
+
+	/** Answer each request the dead thread took with it, and no others. */
+	private failInFlight(message: string): void {
+		const lost = [...this.inFlight];
+		this.inFlight.clear();
+		for (const [id, uri] of lost) {
+			// Superseded while in flight: a newer request for this document is
+			// still coming and will speak for itself. The same rule `receive`
+			// applies to a late result, applied here to a lost one.
+			if (this.latest.get(uri) === id) this.fail(id, uri, message);
+		}
 	}
 
 	private fail(id: number, uri: string, message: string): void {
@@ -130,8 +175,13 @@ export class AnalysisWorkerHost {
 	}
 
 	async dispose(): Promise<void> {
+		// Before anything else, so the exit handler of the thread being
+		// terminated finds the supervisor already closed rather than reaching
+		// for a new one.
+		this.disposed = true;
 		for (const timer of this.timers.values()) clearTimeout(timer);
 		this.timers.clear();
+		this.inFlight.clear();
 		const worker = this.worker;
 		this.worker = null;
 		if (worker) await worker.terminate();
