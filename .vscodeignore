@@ -1,0 +1,41 @@
+# What ships is package.json, README.md, language-configuration.json,
+# syntaxes/, schemas/, out/ and the production dependencies -- everything below
+# is a build input or a tool, not something the installed extension reads.
+#
+# Patterns are anchored at the extension root, so `server/**` does not touch
+# `out/server/**`. A leading slash is *not* supported here (unlike .gitignore)
+# and is silently matched against nothing -- which shipped the whole compiler
+# source the first time.
+#
+# node_modules/ is deliberately absent from this list: the language server is
+# bundled with `vscode-languageserver` marked external (see SERVER_EXTERNALS in
+# scripts/build.mjs), so out/server/server.js resolves those packages at run
+# time and they have to come along. vsce includes production dependencies only.
+
+# --- source, which is compiled into out/ ---
+src/**
+server/**
+scripts/**
+test/**
+out/test/**
+
+# --- build inputs, bundled into out/ ---
+compiler/**
+patches/**
+# The compiler itself is compiled to out/compiler/mindc.cjs and then inlined
+# into the server and both workers (see the header of scripts/build.mjs), so
+# nothing reads it at run time; out/probe.mjs is the AST question tool.
+out/compiler/**
+out/probe.mjs
+
+# --- project files ---
+.vscode/**
+docs/**
+.gitignore
+tsconfig.json
+package-lock.json
+probe.mts
+*.vsix
+
+# --- sourcemaps, should any ever be turned on ---
+**/*.map

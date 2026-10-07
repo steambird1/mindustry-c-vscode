@@ -1,0 +1,15 @@
+{
+	// F5: start an Extension Development Host with this folder's build in it.
+	// The client spawns out/server/server.js itself, so nothing else needs
+	// launching; run `npm run build` (or `npm run watch`) first, then Ctrl+R /
+	// Cmd+R in the Development Host to pick changes up.
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Run Mindustry-C extension",
+			"type": "extensionHost",
+			"request": "launch",
+			"args": ["--extensionDevelopmentPath=${workspaceFolder}"]
+		}
+	]
+}
