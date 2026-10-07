@@ -213,6 +213,13 @@ async function loadWorkspaceRoots(): Promise<void> {
 	}
 }
 
+/**
+ * Send one analysis result to the editor.
+ *
+ * Two things arrive here that are not findings about the file: a run that died
+ * before it could read it, and a run whose index is from an older version of
+ * the text. Both are handled below rather than left to look like a clean file.
+ */
 function publish(response: AnalysisResponse): void {
 	const document = documents.get(response.uri);
 	if (!document) return;
@@ -228,6 +235,16 @@ function publish(response: AnalysisResponse): void {
 		if (settings.diagnostics.openIncludes) void watchIncludes(response.index.includes);
 	}
 
+	/*
+	A run that died says nothing about the file, and this is also where the
+	previous run's squiggles are cleared -- which a reader takes as "it compiles
+	now". The whole stack goes to the output channel, where all of it fits.
+	*/
+	const failure = response.fatal ?? response.index?.internalError;
+	if (failure) {
+		connection.console.error(`Mindustry-C: analysis failed for ${response.uri}\n${failure}`);
+	}
+
 	if (!settings.diagnostics.enable) return;
 
 	// Group by the file each diagnostic belongs to: some come from #include.
@@ -241,9 +258,47 @@ function publish(response: AnalysisResponse): void {
 		byUri.set(target, list);
 	}
 
+	/*
+	One diagnostic stands in for everything the run failed to say. The
+	supervisor already writes its own when the worker thread itself dies, and
+	its message is the `fatal` we just read -- so adding a second would put the
+	same event in the file twice.
+	*/
+	const alreadyReported = response.diagnostics.some(diagnostic => diagnostic.message === failure);
+	if (failure && !alreadyReported) {
+		const list = byUri.get(response.uri) ?? [];
+		list.unshift(failureDiagnostic(failure));
+		byUri.set(response.uri, list);
+	}
+
 	for (const uri of new Set([...byUri.keys(), response.uri])) {
 		void connection.sendDiagnostics({ uri, diagnostics: byUri.get(uri) ?? [] });
 	}
+}
+
+/**
+ * The mark a dead run leaves behind.
+ *
+ * It sits at the top of the document rather than on a line, because a run that
+ * never finished has no opinion about any line in particular, and the one
+ * conclusion a reader must not reach is that line 1 is wrong.
+ */
+function failureDiagnostic(detail: string): Diagnostic {
+	return {
+		severity: DiagnosticSeverity.Error,
+		message:
+			'Mindustry-C could not finish analysing this file, so it has not been checked: ' +
+			'diagnostics and language features for it may be missing or wrong.\n\n' +
+			`${firstLineOf(detail)}\n\n` +
+			'Full stack trace in the "Mindustry-C" output channel.',
+		source: 'mindc',
+		range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+	};
+}
+
+function firstLineOf(text: string): string {
+	const end = text.indexOf('\n');
+	return end < 0 ? text : text.slice(0, end);
 }
 
 /** Errors and warnings arrive in one list; `severity` says which is which. */
