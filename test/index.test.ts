@@ -463,10 +463,13 @@ describe('outline', () => {
 });
 
 describe('overloads', () => {
-	// Only the two-argument overload is called. Calling both arities crashes the
-	// compiler's semantic analyser (a pre-existing bug: `visitFunctionCall` reads
-	// a missing property and the whole AST comes back null with no diagnostics at
-	// all), so a fixture that does that would prove nothing about overloads.
+	/*
+	Both arities are called, on purpose. This used to crash the compiler's
+	semantic analyser: `visitFunctionCall` read a property of `undefined`, the
+	file came back with `ast: null`, no diagnostics, and nothing on screen said
+	anything was wrong. It is fixed upstream, and the fixture calls both arities
+	so a reintroduction fails here rather than quietly in the editor.
+	*/
 	const OVERLOADS = `int add(int a, int b) {
 	return a + b;
 }
@@ -476,9 +479,53 @@ int add(int a, int b, int c) {
 }
 
 int main() {
-	return add(1, 2);
+	return add(1, 2) + add(1, 2, 3);
 }
 `;
+
+	it('analyses a file that calls both arities', async () => {
+		const response = await analyse(request(OVERLOADS), host);
+		assert.equal(response.fatal, undefined, 'the analyser crashed on a valid overload set');
+		assert.equal(response.index?.internalError, undefined);
+		assert.deepEqual(
+			response.diagnostics.map(diagnostic => diagnostic.message),
+			[],
+			'a file that calls each overload correctly should be clean'
+		);
+	});
+
+	it('reports a call matching no arity rather than crashing on it', async () => {
+		// Two versions, four arguments: nothing to choose from. Before the fix
+		// this threw after writing its message, so the run ended with `ast: null`
+		// and the message the user needed was thrown away with it.
+		const bad = OVERLOADS.replace('add(1, 2) + add(1, 2, 3)', 'add(1, 2, 3, 4)');
+		const response = await analyse(request(bad), host);
+		assert.equal(response.fatal, undefined, 'an unmatched arity must not end the run');
+		assert.ok(
+			response.diagnostics.some(diagnostic =>
+				/No version of 'add' accepts these arguments/.test(diagnostic.message)
+			),
+			`expected an arity diagnostic, got ${JSON.stringify(response.diagnostics)}`
+		);
+		assert.ok(response.index, 'a file with errors still needs its index');
+	});
+
+	it('reports the count when only one version exists', async () => {
+		const single = `int add(int a, int b) {
+	return a + b;
+}
+
+int main() {
+	return add(1, 2, 3);
+}
+`;
+		const response = await analyse(request(single), host);
+		assert.equal(response.fatal, undefined);
+		assert.deepEqual(
+			response.diagnostics.map(diagnostic => diagnostic.message),
+			["Function 'add' expects 2 arguments, but 3 were provided"]
+		);
+	});
 
 	it('indexes each overload under the name the user wrote', async () => {
 		const response = await analyse(request(OVERLOADS), host);
