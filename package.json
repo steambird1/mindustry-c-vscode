@@ -217,7 +217,7 @@
     "gen:check": "node scripts/gen-grammar.mjs --check",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "patches:verify": "node scripts/verify-patch-neutrality.mjs",
-    "pretest": "node scripts/build-tests.mjs",
+    "pretest": "node scripts/build.mjs && node scripts/build-tests.mjs",
     "test": "node --test \"out/test/*.test.js\"",
     "test:golden": "node scripts/golden-compile.mjs",
     "test:golden:update": "node scripts/golden-compile.mjs --update",

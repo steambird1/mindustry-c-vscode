@@ -33,6 +33,7 @@ import { URI } from 'vscode-uri';
 
 import { AnalysisWorkerHost, defaultWorkerPath } from '../src/compiler/analysisSupervisor';
 import { diagnosticsAreSlow } from '../src/compiler/analysis';
+import { samePath } from '../src/compiler/documentAccess';
 import type { AnalysisResponse, CompilerDiagnostic, EffectiveConfig } from '../src/common/types';
 import {
 	canRename,
@@ -91,6 +92,30 @@ function fromUri(uri: string): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Which document a diagnostic belongs to, given the file it came from.
+ *
+ * The uri the client sent and `URI.file(path).toString()` are the same string
+ * only when the client spelled it the way vscode-uri does: on Windows the drive
+ * colon is percent-encoded or left alone depending on which side built the
+ * text, and the filesystem accepts both. A diagnostic published under the other
+ * spelling lands on a document the editor does not have, so the file it belongs
+ * to keeps its previous squiggles and looks checked.
+ *
+ * So the open documents are asked first. A path nobody has open falls back to
+ * being turned into a uri, which is the right answer for a file nobody is
+ * looking at either way.
+ */
+function documentUriFor(fsPath: string, mainUri: string): string {
+	const main = fromUri(mainUri);
+	if (main && samePath(main, fsPath)) return mainUri;
+	for (const document of documents.all()) {
+		const uri = fromUri(document.uri);
+		if (uri && samePath(uri, fsPath)) return document.uri;
+	}
+	return toUri(fsPath);
 }
 
 /* ------------------------------------------------------------------ *
@@ -252,7 +277,7 @@ function publish(response: AnalysisResponse): void {
 	for (const diagnostic of response.diagnostics) {
 		// A diagnostic from an `#include`d file belongs to that file, not to the
 		// one the user is editing -- that is the whole point of resolving them.
-		const target = diagnostic.path ? toUri(diagnostic.path) : response.uri;
+		const target = diagnostic.path ? documentUriFor(diagnostic.path, response.uri) : response.uri;
 		const list = byUri.get(target) ?? [];
 		list.push(toDiagnostic(diagnostic));
 		byUri.set(target, list);
@@ -512,5 +537,16 @@ documents.onDidClose(event => {
 connection.onDidChangeWatchedFiles(() => {
 	for (const document of documents.all()) scheduleAnalysis(document);
 });
+
+/*
+ * Without this the manager never hears a document open, change or close, so
+ * `documents` stays empty forever: nothing above would ever fire, no analysis
+ * would be scheduled, and every feature -- hover, definition, completion --
+ * would look the document up and find nothing. The failure is entirely silent,
+ * because the server still answers `initialize` with all seven capabilities.
+ *
+ * It has to be registered before `connection.listen()` starts dispatching.
+ */
+documents.listen(connection);
 
 connection.listen();

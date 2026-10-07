@@ -12,15 +12,15 @@
  */
 
 import { parentPort, workerData } from 'node:worker_threads';
-import { readFileSync } from 'node:fs';
 
 import { analyse } from './analysis';
 import { silenceCompilerLogs } from './bridge';
+import { createDocumentAccess, type KnownDocuments } from './documentAccess';
 import type { AnalysisRequest } from '../common/types';
 
 interface WorkerBootstrap {
 	/** Documents the worker may read for `#include`, by uri. */
-	knownPaths: Record<string, string>;
+	knownPaths: KnownDocuments;
 }
 
 const port = parentPort;
@@ -30,29 +30,19 @@ silenceCompilerLogs();
 
 const bootstrap = (workerData ?? { knownPaths: {} }) as WorkerBootstrap;
 
-/**
+/*
  * Documents are handed to the worker rather than read from disk: the editor
  * holds unsaved buffers, and a header saved only in the editor must still
  * resolve. Files on disk are the fallback for anything the editor does not own.
+ * Which is which, and why `pathOf` must never answer with the buffer, is
+ * documentAccess.ts.
  */
-function readFile(path: string): string | null {
-	for (const [uri, known] of Object.entries(bootstrap.knownPaths)) {
-		if (path === known || uri === path) return known;
-	}
-	try {
-		return readFileSync(path, 'utf8');
-	} catch {
-		return null;
-	}
-}
+const access = createDocumentAccess(bootstrap.knownPaths);
 
 port.on('message', (request: AnalysisRequest) => {
 	void (async () => {
 		try {
-			const response = await analyse(request, {
-				readFile,
-				pathOf: uri => bootstrap.knownPaths[uri] ?? uriToPath(uri),
-			});
+			const response = await analyse(request, access);
 			port!.postMessage(response);
 		} catch (error) {
 			port!.postMessage({
@@ -65,12 +55,3 @@ port.on('message', (request: AnalysisRequest) => {
 		}
 	})();
 });
-
-function uriToPath(uri: string): string | null {
-	if (!uri.startsWith('file://')) return null;
-	try {
-		return decodeURIComponent(new URL(uri).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-	} catch {
-		return null;
-	}
-}

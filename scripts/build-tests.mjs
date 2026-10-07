@@ -6,10 +6,15 @@
  * bundle in `out/test/`, with everything it imports inlined -- including the
  * compiler, for the tests that exercise the bridge.
  *
+ * `pretest` runs scripts/build.mjs first, because both this bundling and
+ * test/lsp.test.ts need what it produces: the compiler bundle has to exist to
+ * be inlined, and the lsp test speaks to out/server/server.js over a pipe.
+ *
  * Only the VS Code-free modules are testable this way, which is most of the
  * logic: diagnostics attribution, the symbol index, the feature functions, and
  * the configuration merge. The parts that talk to the editor (preview, config
- * panel, commands) are exercised by running the extension, not by a unit test.
+ * panel, commands) are exercised by running the extension, and the language
+ * server itself by driving it over stdio.
  *
  *   node scripts/build-tests.mjs           # once
  *   node scripts/build-tests.mjs --watch   # rebuild on change

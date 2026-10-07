@@ -11,15 +11,15 @@
  */
 
 import { parentPort, workerData } from 'node:worker_threads';
-import { readFileSync } from 'node:fs';
 
 import { compile } from './bridge';
 import { silenceCompilerLogs } from './bridge';
 import { attributeDiagnostics } from './analysis';
+import { createDocumentAccess, type KnownDocuments } from './documentAccess';
 import type { BuildRequest, BuildResponse } from '../common/types';
 
 interface WorkerBootstrap {
-	knownPaths: Record<string, string>;
+	knownPaths: KnownDocuments;
 }
 
 const port = parentPort;
@@ -29,19 +29,12 @@ silenceCompilerLogs();
 
 const bootstrap = (workerData ?? { knownPaths: {} }) as WorkerBootstrap;
 
+// Which file is which, and why the answer is never the buffer's text, is
+// documentAccess.ts.
+const access = createDocumentAccess(bootstrap.knownPaths);
+
 /** Ids that were cancelled while a run was in flight. */
 const cancelled = new Set<number>();
-
-function readFile(candidate: string): string | null {
-	for (const [uri, known] of Object.entries(bootstrap.knownPaths)) {
-		if (candidate === known || uri === candidate) return known;
-	}
-	try {
-		return readFileSync(candidate, 'utf8');
-	} catch {
-		return null;
-	}
-}
 
 interface CancelMessage {
 	type: 'cancel';
@@ -65,8 +58,8 @@ async function run(request: BuildRequest): Promise<void> {
 				memoryBlocks: request.config.memoryBlocks,
 				includePaths: request.config.includePaths,
 			},
-			filePath: pathOf(request.uri),
-			readFile,
+			filePath: access.pathOf(request.uri),
+			readFile: access.readFile,
 		});
 
 		if (cancelled.delete(request.id)) return;
@@ -75,7 +68,7 @@ async function run(request: BuildRequest): Promise<void> {
 			result.errors,
 			result.warnings,
 			result.tokens,
-			pathOf(request.uri),
+			access.pathOf(request.uri),
 			result.sources
 		);
 
@@ -109,16 +102,5 @@ async function run(request: BuildRequest): Promise<void> {
 			fatalError: error instanceof Error ? (error.stack ?? error.message) : String(error),
 			elapsedMs: 0,
 		} satisfies BuildResponse);
-	}
-}
-
-function pathOf(uri: string): string | null {
-	const known = bootstrap.knownPaths[uri];
-	if (known) return known;
-	if (!uri.startsWith('file://')) return null;
-	try {
-		return decodeURIComponent(new URL(uri).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-	} catch {
-		return null;
 	}
 }
