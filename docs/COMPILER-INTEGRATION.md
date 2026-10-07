@@ -196,16 +196,30 @@ instead of quietly breaking a feature.
 These are the compiler's, not the extension's, and none is worked around
 silently:
 
-- **Calling a 3-argument overload when a 2-argument one exists crashes the
-  semantic analyser.** `visitFunctionCall` reads a property of `undefined`. The
-  crash is caught by `analyze()`'s own `try`, so the result is `ast: null` with
-  an *empty* error list. The index tolerates a null AST: a file that crashes the
-  analyser gets no symbols, but no wrong ones.
+- **Calling a 3-argument overload when a 2-argument one exists used to crash the
+  semantic analyser.** `visitFunctionCall` read a property of `undefined`.
+  Patch 0001's `try` caught it, so the run came back `ast: null` with an
+  *empty* error list — a file with a mistake in it looked perfectly clean.
+  **Fixed in the compiler** by narrowing the overload set on argument count
+  before the arguments are visited, plus a bounds guard on the parameter list
+  (`preselectOverloadByArity` in `mindcSemantic.js`). The first guard alone was
+  not enough: a call matching *no* arity still ran the type-check loop past the
+  end of the list, which is the same read from the same method. Both loops are
+  guarded now, and `test/index.test.ts` calls both arities — and an arity that
+  matches nothing — so a reintroduction fails there rather than in the editor.
 - **A typedef's name is not in the program scope.** `scope.lookup('point_t')`
   returns `null` even though `point_t` resolves everywhere else, so a typedef's
   type is read out of the text between the `typedef` keyword and the name.
 - **The dialect has no `enum`.** `enum colour { red, green };` is a parse error
   (`Expected variable name in declaration`).
+- **A `for` initialiser must be an expression, not a declaration.**
+  `for (int i = 0; i < 3; i++)` reports `Unexpected token in expression: INT
+  'int'`, then an internal parser error and five cascading diagnostics;
+  `for (; t < 3; t++)` fails too, because the parser expects an expression
+  first either way. Checked against `HEAD` with the patches applied and the
+  behaviour is identical, so this is the compiler's and not something this
+  repository introduced. The extension shows whatever the parser produced,
+  internal error included.
 - **`@`-constants parse as identifiers named after the sigil** (`@copper`), with
   no symbol. They are left out of the index — indexing them unresolved would
   make hover claim a perfectly valid content id is undeclared — and answered from
@@ -232,9 +246,30 @@ becomes a problem.
 ## Crash containment
 
 The analysis worker snapshots the compiler on every request, so an analyser
-crash can only ever affect the worker; the supervisor respawns it and the user
-sees one "internal error" diagnostic instead of a frozen editor. Builds run in a
-separate, cancellable worker, and exactly one build runs at a time.
+crash can only ever affect the worker; the supervisor respawns it. Builds run in
+a separate, cancellable worker, and exactly one build runs at a time.
+
+What the user sees when a run dies is less obvious than it looks, because a
+crash is not an error: patch 0001 catches it and returns a run with
+`fatalError` set, no AST, and often no diagnostics at all. Left alone, that run
+would *clear* the previous one's squiggles, and a file with a mistake in it
+would read as clean. So the server treats a dead run as a finding of its own —
+one diagnostic at the top of the file, saying the file has not been checked —
+with the full stack in the `Mindustry-C` output channel, where all of it fits.
+
+Three ways a run dies, all reaching the server as `fatal`:
+
+| Where it died | `fatal` | `index` |
+| --- | --- | --- |
+| The compiler throws inside `analyze()` (caught by patch 0001) | full stack | present, `internalError` = first line |
+| The worker throws around the compiler | full stack | `null` |
+| The worker thread dies (supervisor `fail()`) | message | `null`, already carrying its own diagnostic |
+
+The server reads `response.fatal ?? response.index?.internalError` and does not
+add a second diagnostic when the one already present says the same thing, so a
+dead thread still produces exactly one message. `test/analysis.test.ts` pins
+both spellings: if either stops being written, the diagnostic that stands in for
+a whole run's worth of findings disappears and the file looks clean again.
 
 ## Build-time extraction
 
