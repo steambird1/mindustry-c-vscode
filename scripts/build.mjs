@@ -20,9 +20,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import esbuild from 'esbuild';
+import { compilerDirOf, makeCompilerOptions } from './lib/compiler-build.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const compilerDir = process.env.MINDC_COMPILER_DIR ?? path.join(root, 'compiler');
+const compilerDir = compilerDirOf(root);
 const watch = process.argv.includes('--watch');
 const dev = watch || process.argv.includes('--dev');
 
@@ -36,39 +37,11 @@ const SERVER_EXTERNALS = [
 ];
 
 /**
- * The compiler is written for browsers and imports `main.html` siblings. Any
- * import esbuild cannot resolve is left alone rather than failing the build: the
- * code path that needs it (`#include` over HTTP) is dead in Node.
- *
- * The entry is synthetic rather than `mindc.js` itself: `mindc.js` only exports
- * `Compiler`, but the bridge also needs `AttributeClass`, `MemoryBlock` and
- * `Lexer`, which live in other modules. Listing them here means a missing
- * export becomes a build error rather than an `undefined is not a constructor`
- * at the user's first keystroke.
+ * Defined in `scripts/lib/compiler-build.mjs` rather than here, so that
+ * `scripts/probe.mjs` can produce the identical bundle: see that file for why
+ * the entry is synthetic and why the warnings are held back.
  */
-const compilerEntry = [
-	`export { Compiler, CompilerExtensionBase, defaultExtensions } from './mindc.js';`,
-	`export { AttributeClass, ASTNodeType } from './mindcBase.js';`,
-	`export { MemoryBlock, MEMORY_RESERVE_SIZE } from './mindcGeneratorBase.js';`,
-	`export { Lexer, TokenType } from './mindcLexer.js';`,
-].join('\n');
-
-const compilerOptions = {
-	stdin: { contents: compilerEntry, resolveDir: compilerDir, loader: 'js' },
-	outfile: path.join(root, 'out', 'compiler', 'mindc.cjs'),
-	bundle: true,
-	format: 'cjs',
-	platform: 'node',
-	target: 'node18',
-	external: ['node:*'],
-	loader: { '.js': 'js' },
-	// The browser's `fetch`/`XMLHttpRequest` are absent in Node; the include
-	// resolver hook (patch 0002) is what the extension actually uses.
-	define: { 'import.meta.url': '__filename' },
-	// Warnings are summarised below rather than printed, so that a warning in
-	// the compiler's own code never looks like a failure of this build.
-	logLevel: 'silent',
-};
+const compilerOptions = makeCompilerOptions({ root, compilerDir });
 
 function jsOptions(entry, outfile, extra = {}) {
 	return {
