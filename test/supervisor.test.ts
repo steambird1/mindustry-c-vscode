@@ -108,3 +108,43 @@ describe('a thread that dies with a request in flight', () => {
 		assert.equal(host.crashCount, 0);
 	});
 });
+
+describe('a thread that is told about buffers that changed', () => {
+	it('uses the new text for the next request, not the map it started with', async () => {
+		const seen: AnalysisResponse[] = [];
+		const host = new AnalysisWorkerHost({
+			// Answers with the map it currently holds, so the assertion is about
+			// what the thread believes rather than about how it was told.
+			workerPath: fixture(
+				'fixture-documents-worker.js',
+				`const { parentPort, workerData } = require('node:worker_threads');
+let known = workerData.knownPaths ?? {};
+parentPort.on('message', message => {
+	if (message.type === 'known-documents') { known = message.documents; return; }
+	parentPort.postMessage({ id: message.id, uri: message.uri, diagnostics: [], index: null, fatal: JSON.stringify(known) });
+});
+`
+			),
+			debounceMs: 0,
+			onResult: response => seen.push(response),
+		});
+
+		try {
+			host.setKnownDocuments(new Map([['file:///project/lib.h', 'int before(void);']]));
+			host.analyse(request);
+			await waitFor(() => seen.length === 1, 'the first answer');
+			assert.match(seen[0].fatal!, /int before/);
+
+			// The thread is already running, so only the message can reach it.
+			host.setKnownDocuments(new Map([['file:///project/lib.h', 'int after(void);']]));
+			host.analyse({ ...request, version: request.version + 1 });
+			await waitFor(() => seen.length === 2, 'the second answer');
+
+			assert.match(seen[1].fatal!, /int after/);
+			assert.doesNotMatch(seen[1].fatal!, /int before/);
+		} finally {
+			await host.dispose();
+		}
+	});
+});
+

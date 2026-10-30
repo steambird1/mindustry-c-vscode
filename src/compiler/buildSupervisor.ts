@@ -9,7 +9,7 @@
 
 import { Worker } from 'node:worker_threads';
 
-import type { BuildRequest, BuildResponse } from '../common/types';
+import type { BuildRequest, BuildResponse, KnownDocumentsMessage } from '../common/types';
 
 export interface BuildWorkerOptions {
 	/** Absolute path of the built worker bundle. */
@@ -29,9 +29,21 @@ export class BuildWorkerHost {
 
 	private knownPaths: Record<string, string> = {};
 
+	/**
+	 * Buffers the build may `#include`, so an unsaved header is not read from a
+	 * stale copy on disk. Same arrangement as the analyser: the map is handed
+	 * over at spawn, and a live thread is told when it changes.
+	 */
 	setKnownDocuments(documents: Map<string, string>): void {
 		this.knownPaths = Object.fromEntries(documents);
-		this.spawn();
+		try {
+			this.worker?.postMessage({
+				type: 'known-documents',
+				documents: this.knownPaths,
+			} satisfies KnownDocumentsMessage);
+		} catch {
+			// On its way out; the next `start()` spawns with `knownPaths`.
+		}
 	}
 
 	/** Start a build, cancelling any build already running. */

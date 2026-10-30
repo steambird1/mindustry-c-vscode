@@ -92,6 +92,19 @@ export interface AnalysisRequest {
 	targetVersion: number;
 }
 
+/**
+ * Pushed to a worker whenever the editor's open buffers change.
+ *
+ * The worker is handed the map when its thread starts, but the thread lives on,
+ * and a header edited afterwards would otherwise stay at whatever it was at
+ * spawn time. There is no `id`: this is not a request and is never answered.
+ */
+export interface KnownDocumentsMessage {
+	type: 'known-documents';
+	/** uri -> buffer text, for every open file the editor has. */
+	documents: Record<string, string>;
+}
+
 export interface CompilerDiagnostic {
 	message: string;
 	/** 1-based, as the compiler reports. */

@@ -61,6 +61,16 @@ path is used unchanged, so `main.html` keeps working.
 Tokens coming from an include carry `location.filename`, which is what lets the
 extension follow includes at all.
 
+The text an include resolves to is the editor's buffer when it has that file
+open, and the file on disk otherwise. Every open document is handed to the
+workers as `uri -> text`; the map is passed at spawn and pushed again whenever
+it changes (`KnownDocumentsMessage`), so a header edited but not saved still
+resolves, and a thread that has been alive for a while cannot keep reading the
+copy it started with. Headers are synced because the extension's document
+selector includes `**/*.h` and `**/*.hpp` — VS Code gives them language `c`, so
+selecting by `mlgc` alone would never show the server their buffers. The server
+never analyses a header; it only reads it.
+
 ## Public surface the extension uses
 
 ```js

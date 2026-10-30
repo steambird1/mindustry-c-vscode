@@ -7,6 +7,7 @@
  * own thread and are cancellable.
  *
  * Protocol (parent -> worker): BuildRequest | {type: 'cancel', id}
+ *                              | KnownDocumentsMessage
  *                            (worker -> parent): BuildResponse
  */
 
@@ -16,7 +17,7 @@ import { compile } from './bridge';
 import { silenceCompilerLogs } from './bridge';
 import { attributeDiagnostics } from './analysis';
 import { createDocumentAccess, type KnownDocuments } from './documentAccess';
-import type { BuildRequest, BuildResponse } from '../common/types';
+import type { BuildRequest, BuildResponse, KnownDocumentsMessage } from '../common/types';
 
 interface WorkerBootstrap {
 	knownPaths: KnownDocuments;
@@ -31,7 +32,7 @@ const bootstrap = (workerData ?? { knownPaths: {} }) as WorkerBootstrap;
 
 // Which file is which, and why the answer is never the buffer's text, is
 // documentAccess.ts.
-const access = createDocumentAccess(bootstrap.knownPaths);
+let access = createDocumentAccess(bootstrap.knownPaths);
 
 /** Ids that were cancelled while a run was in flight. */
 const cancelled = new Set<number>();
@@ -41,9 +42,10 @@ interface CancelMessage {
 	id: number;
 }
 
-port.on('message', (message: BuildRequest | CancelMessage) => {
+port.on('message', (message: BuildRequest | CancelMessage | KnownDocumentsMessage) => {
 	if ('type' in message) {
-		cancelled.add(message.id);
+		if (message.type === 'cancel') cancelled.add(message.id);
+		else access = createDocumentAccess(message.documents);
 		return;
 	}
 	void run(message);

@@ -13,7 +13,7 @@
 import { Worker } from 'node:worker_threads';
 import * as path from 'node:path';
 
-import type { AnalysisRequest, AnalysisResponse } from '../common/types';
+import type { AnalysisRequest, AnalysisResponse, KnownDocumentsMessage } from '../common/types';
 
 export interface AnalysisWorkerOptions {
 	/** Absolute path of the built worker bundle. */
@@ -49,10 +49,23 @@ export class AnalysisWorkerHost {
 	 * Documents the worker should serve from memory rather than from disk: the
 	 * editor holds unsaved buffers, and a header that exists only in the editor
 	 * must still resolve.
+	 *
+	 * No thread is started here -- the next request does that, with this map.
+	 * A thread that already exists keeps the map it was born with, so it has to
+	 * be told: without that, a header edited after the first analysis stays at
+	 * its spawn-time text for as long as the thread lives.
 	 */
 	setKnownDocuments(documents: Map<string, string>): void {
 		this.knownPaths = Object.fromEntries(documents);
-		this.spawn();
+		try {
+			this.worker?.postMessage({
+				type: 'known-documents',
+				documents: this.knownPaths,
+			} satisfies KnownDocumentsMessage);
+		} catch {
+			// The thread is on its way out. `died()` answers whatever it was
+			// holding, and the next spawn picks the map up from `knownPaths`.
+		}
 	}
 
 	/**

@@ -7,7 +7,7 @@
  * supervisor answers any request this thread was holding, so the document is
  * told it went unchecked, and starts a fresh thread on the next one.
  *
- * Protocol (parent -> worker): AnalysisRequest
+ * Protocol (parent -> worker): AnalysisRequest | KnownDocumentsMessage
  *                            (worker -> parent): AnalysisResponse
  */
 
@@ -16,7 +16,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { analyse } from './analysis';
 import { silenceCompilerLogs } from './bridge';
 import { createDocumentAccess, type KnownDocuments } from './documentAccess';
-import type { AnalysisRequest } from '../common/types';
+import type { AnalysisRequest, KnownDocumentsMessage } from '../common/types';
 
 interface WorkerBootstrap {
 	/** Documents the worker may read for `#include`, by uri. */
@@ -37,17 +37,25 @@ const bootstrap = (workerData ?? { knownPaths: {} }) as WorkerBootstrap;
  * Which is which, and why `pathOf` must never answer with the buffer, is
  * documentAccess.ts.
  */
-const access = createDocumentAccess(bootstrap.knownPaths);
+let access = createDocumentAccess(bootstrap.knownPaths);
 
-port.on('message', (request: AnalysisRequest) => {
+port.on('message', (message: AnalysisRequest | KnownDocumentsMessage) => {
+	// Buffers changed since this thread started. The access object is rebuilt
+	// rather than mutated, so an analysis already running keeps the map it was
+	// handed and the next one gets the new text.
+	if ('type' in message) {
+		access = createDocumentAccess(message.documents);
+		return;
+	}
+
 	void (async () => {
 		try {
-			const response = await analyse(request, access);
+			const response = await analyse(message, access);
 			port!.postMessage(response);
 		} catch (error) {
 			port!.postMessage({
-				id: request.id,
-				uri: request.uri,
+				id: message.id,
+				uri: message.uri,
 				diagnostics: [],
 				index: null,
 				fatal: error instanceof Error ? (error.stack ?? error.message) : String(error),

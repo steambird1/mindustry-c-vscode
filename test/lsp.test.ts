@@ -34,6 +34,14 @@ const serverPath = path.join(root, 'out', 'server', 'server.js');
  */
 const CANONICAL = 'file:///c%3A/project/main.mlgc';
 const LITERAL = 'file:///c:/project/main.mlgc';
+
+/**
+ * A header that exists only in the editor, and the file that includes it.
+ * Nothing is on disk here, so the include has nowhere else to come from.
+ */
+const INCLUDE_HEADER = 'file:///c%3A/project/lib.h';
+const INCLUDE_MAIN = 'file:///c%3A/project/include-main.mlgc';
+
 const BROKEN = 'int main(void) {\n    return thisDoesNotExist;\n}\n';
 
 interface Published {
@@ -129,24 +137,31 @@ function connect(target: string) {
 	};
 
 	/**
-	 * Wait until `uri` is sent a finding -- not merely a publish, because the
-	 * server always sends an empty one for the document it was asked about, and
-	 * an empty one is exactly what a broken attribution looks like.
+	 * Wait until `uri` gets a publish the caller accepts.
+	 *
+	 * For a finding, `count > 0`; a clean run is a publish with none, and
+	 * waiting for "a publish at all" is what distinguishes "the server said the
+	 * file is fine" from "the server never spoke".
 	 */
-	const waitForFinding = (uri: string, timeoutMs: number): Promise<Published> => {
-		const already = published.find(entry => entry.uri === uri && entry.count > 0);
+	const waitForPublished = (
+		uri: string,
+		accept: (entry: Published) => boolean,
+		what: string,
+		timeoutMs: number
+	): Promise<Published> => {
+		const already = published.find(entry => entry.uri === uri && accept(entry));
 		if (already) return Promise.resolve(already);
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				const got = published.map(entry => `${entry.count} for ${entry.uri}`);
 				reject(
 					new Error(
-						`no finding for ${uri} within ${timeoutMs} ms; saw ${JSON.stringify(got)}; stderr: ${stderr.slice(0, 400)}`
+						`no ${what} for ${uri} within ${timeoutMs} ms; saw ${JSON.stringify(got)}; stderr: ${stderr.slice(0, 400)}`
 					)
 				);
 			}, timeoutMs);
 			const poll = setInterval(() => {
-				const found = published.find(entry => entry.uri === uri && entry.count > 0);
+				const found = published.find(entry => entry.uri === uri && accept(entry));
 				if (!found) return;
 				clearTimeout(timer);
 				clearInterval(poll);
@@ -154,6 +169,12 @@ function connect(target: string) {
 			}, 25);
 		});
 	};
+
+	const waitForFinding = (uri: string, timeoutMs: number): Promise<Published> =>
+		waitForPublished(uri, entry => entry.count > 0, 'finding', timeoutMs);
+
+	const waitForPublish = (uri: string, timeoutMs: number): Promise<Published> =>
+		waitForPublished(uri, () => true, 'publish', timeoutMs);
 
 	const close = async (): Promise<void> => {
 		try {
@@ -174,7 +195,7 @@ function connect(target: string) {
 		});
 	};
 
-	return { child, request, write, published, waitForFinding, close };
+	return { child, request, write, published, waitForFinding, waitForPublish, close };
 }
 
 describe('the language server, over the wire', () => {
@@ -209,11 +230,11 @@ describe('the language server, over the wire', () => {
 		}
 	});
 
-	const open = (uri: string): void => {
+	const open = (uri: string, languageId = 'mlgc', text = BROKEN): void => {
 		client.write({
 			method: 'textDocument/didOpen',
 			params: {
-				textDocument: { uri, languageId: 'mlgc', version: 1, text: BROKEN },
+				textDocument: { uri, languageId, version: 1, text },
 			},
 		});
 	};
@@ -239,8 +260,20 @@ describe('the language server, over the wire', () => {
 		assert.match(result.messages.join('\n'), /thisDoesNotExist/);
 	});
 
+	it('resolves #include from a header that exists only in the editor', async () => {
+		// The header is opened before the file that includes it, and there is no
+		// copy on disk, so the run cannot even open it without the buffer.
+		open(INCLUDE_HEADER, 'c', 'int fromBuffer(void);\n');
+		open(INCLUDE_MAIN, 'mlgc', '#include "lib.h"\nint main(void) {\n    return 0;\n}\n');
+
+		const result = await client.waitForPublish(INCLUDE_MAIN, 20000);
+
+		assert.equal(result.count, 0, `expected a clean run, got: ${result.messages.join(' | ')}`);
+	});
+
 	it('never publishes a finding under a uri that is not a document', () => {
-		const stray = client.published.filter(entry => entry.count > 0 && entry.uri !== CANONICAL && entry.uri !== LITERAL);
+		const known = new Set([CANONICAL, LITERAL, INCLUDE_HEADER, INCLUDE_MAIN]);
+		const stray = client.published.filter(entry => entry.count > 0 && !known.has(entry.uri));
 		assert.deepEqual(stray, [], 'a finding was attributed to something the editor does not have');
 	});
 });

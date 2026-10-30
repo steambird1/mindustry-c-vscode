@@ -51,6 +51,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		documentSelector: [
 			{ scheme: 'file', language: LANGUAGE_ID },
 			{ scheme: 'untitled', language: LANGUAGE_ID },
+			// Headers, which VS Code gives language `c`. The server never
+			// analyses them -- it needs their text so an unsaved `#include`
+			// resolves. Matched by path rather than language, so a different
+			// file association cannot quietly drop them.
+			{ scheme: 'file', pattern: '**/*.h' },
+			{ scheme: 'file', pattern: '**/*.hpp' },
 		],
 		outputChannel: output,
 	};
@@ -246,6 +252,19 @@ class BuildService implements vscode.Disposable {
 		this.output.info('Build cancelled.');
 	}
 
+	/**
+	 * Buffers a build may `#include`, so an unsaved header is not read from a
+	 * stale copy on disk. The file being built is saved first; its includes are
+	 * not, and that is exactly when the disk copy is wrong.
+	 */
+	private openBuffers(): Map<string, string> {
+		const known = new Map<string, string>();
+		for (const open of vscode.workspace.textDocuments) {
+			if (open.uri.scheme === 'file') known.set(open.uri.toString(), open.getText());
+		}
+		return known;
+	}
+
 	async compile(document: vscode.TextDocument, copyAfterwards: boolean): Promise<void> {
 		const configuration = vscode.workspace.getConfiguration(SECTION);
 		const limit = configuration.get<number>('compile.largeFileWarningChars', 30000);
@@ -292,6 +311,7 @@ class BuildService implements vscode.Disposable {
 			text: document.getText(),
 			config: effective,
 		};
+		this.worker.setKnownDocuments(this.openBuffers());
 		const id = this.worker.start(request);
 		if (id < 0) {
 			this.status?.hide();

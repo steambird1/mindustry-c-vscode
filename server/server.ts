@@ -161,13 +161,57 @@ connection.onShutdown(() => {
  * Analysis
  * ------------------------------------------------------------------ */
 
-/** Text the workers should serve from memory: every open mlgc document. */
+/**
+ * Text the workers should serve from memory: every open file the editor has.
+ *
+ * Not just `.mlgc`. `#include` reaches for headers, and an unsaved header has
+ * to resolve like any other buffer; leaving them out meant the include was
+ * read from disk, or not found at all. Untitled documents are skipped -- an
+ * `#include` names a path, and they have none.
+ *
+ * The map is pushed to a live worker (see `setKnownDocuments`), not only handed
+ * over at spawn, so this runs before every analysis rather than once.
+ */
+let lastKnown: { uri: string; text: string }[] = [];
+
 function syncKnownDocuments(): void {
-	const known = new Map<string, string>();
+	const current: { uri: string; text: string }[] = [];
 	for (const document of documents.all()) {
-		if (document.languageId === 'mlgc') known.set(document.uri, document.getText());
+		if (document.uri.startsWith('file:')) {
+			current.push({ uri: document.uri, text: document.getText() });
+		}
 	}
-	worker?.setKnownDocuments(known);
+
+	// `getText()` hands back the same string until the document changes, so
+	// identity is enough to tell whether this push would say anything new.
+	const unchanged =
+		current.length === lastKnown.length &&
+		current.every((entry, index) => {
+			const previous = lastKnown[index];
+			return previous !== undefined && previous.uri === entry.uri && previous.text === entry.text;
+		});
+	if (unchanged) return;
+
+	lastKnown = current;
+	worker?.setKnownDocuments(new Map(current.map(entry => [entry.uri, entry.text])));
+}
+
+/**
+ * Re-analyse whatever included the file that just changed.
+ *
+ * `index.includes` only holds includes that resolved, which is exactly the set
+ * that can be silently out of date: the file compiled, and the header it
+ * compiled against has been edited since. A header that never resolved is
+ * picked up on the next edit of the file that includes it.
+ */
+function scheduleDependents(changed: TextDocument): void {
+	const changedPath = fromUri(changed.uri);
+	if (!changedPath) return;
+	for (const [uri, entry] of indexes) {
+		if (!entry.index.includes.some(include => samePath(include, changedPath))) continue;
+		const document = documents.get(uri);
+		if (document) scheduleAnalysis(document);
+	}
 }
 
 /**
@@ -522,8 +566,19 @@ connection.onDidChangeConfiguration(change => {
  * Document events
  * ------------------------------------------------------------------ */
 
-documents.onDidOpen(event => scheduleAnalysis(event.document));
-documents.onDidChangeContent(event => scheduleAnalysis(event.document));
+/*
+ * A document that is not `mlgc` is a header the client syncs so `#include` can
+ * see it. It is never analysed itself, but whatever includes it has to be,
+ * and the workers have to be told about the buffer before that happens.
+ */
+documents.onDidOpen(event => {
+	scheduleAnalysis(event.document);
+	if (event.document.languageId !== 'mlgc') scheduleDependents(event.document);
+});
+documents.onDidChangeContent(event => {
+	scheduleAnalysis(event.document);
+	if (event.document.languageId !== 'mlgc') scheduleDependents(event.document);
+});
 documents.onDidClose(event => {
 	const { uri } = event.document;
 	indexes.delete(uri);
@@ -531,6 +586,13 @@ documents.onDidClose(event => {
 	if (timer) clearTimeout(timer);
 	pendingTimers.delete(uri);
 	void connection.sendDiagnostics({ uri, diagnostics: [] });
+
+	if (event.document.languageId === 'mlgc') return;
+	// The buffer is gone, so the worker must go back to the file on disk --
+	// even if nothing includes it any more, or a file that starts to include
+	// that path later would be analysed against text nobody is editing.
+	syncKnownDocuments();
+	scheduleDependents(event.document);
 });
 
 // A header changed on disk: everything that includes it must be re-analysed.
