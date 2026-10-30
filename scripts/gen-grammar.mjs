@@ -159,7 +159,7 @@ const escapeForRegex = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const alternation = words =>
 	[...new Set(words)].sort((a, b) => b.length - a.length).map(escapeForRegex).join('|');
 
-const rule = (name, match, scope) => ({ name, match, ...(scope ? { scope } : {}) });
+const rule = (name, match) => ({ name, match });
 
 const mlgcGrammar = {
 	$schema:
@@ -184,7 +184,7 @@ const mlgcGrammar = {
 	repository: {
 		comments: {
 			patterns: [
-				rule('comment.line.double-slash.mlgc', '//.*$', 'comment.line.double-slash.mlgc'),
+				rule('comment.line.double-slash.mlgc', '//.*$'),
 				rule(
 					'comment.block.mlgc',
 					'/\\*',
@@ -225,31 +225,37 @@ const mlgcGrammar = {
 		},
 		strings: {
 			patterns: [
-				rule('string.quoted.double.mlgc', '"', {
+				/*
+				 * Written out rather than through `rule`: a TextMate rule cannot
+				 * carry both `match` and `begin`/`end`. When it does, `match` wins
+				 * and the block is dropped -- which is why a string used to
+				 * highlight as two lone quotation marks.
+				 */
+				{
 					name: 'string.quoted.double.mlgc',
 					begin: '"',
 					end: '"',
 					patterns: [{ include: '#escapes' }],
-				}),
-				rule('string.quoted.single.mlgc', "'", {
-					name: 'string.quoted.single.mlgc',
+				},
+				{
+					// The lexer calls these CHARACTER: `'a'` is an int holding the
+					// code of `a`, not a string of length one.
+					name: 'constant.character.mlgc',
 					begin: "'",
 					end: "'",
 					patterns: [{ include: '#escapes' }],
-				}),
+				},
 			],
 		},
 		escapes: {
-			patterns: [rule('constant.character.escape.mlgc', '\\\\.', 'constant.character.escape.mlgc')],
+			patterns: [rule('constant.character.escape.mlgc', '\\\\.')],
 		},
 		numbers: {
 			patterns: [
-				rule('constant.numeric.hex.mlgc', '\\b0[xX][0-9a-fA-F]+\\b', 'constant.numeric.hex.mlgc'),
+				rule('constant.numeric.hex.mlgc', '\\b0[xX][0-9a-fA-F]+\\b'),
 				rule(
 					'constant.numeric.mlgc',
-					'\\b\\d+(\\.\\d+)?([eE][+-]?\\d+)?[fFlLuU]*\\b',
-					'constant.numeric.mlgc'
-				),
+					'\\b\\d+(\\.\\d+)?([eE][+-]?\\d+)?[fFlLuU]*\\b'),
 			],
 		},
 		'content-constants': {
@@ -282,29 +288,23 @@ const mlgcGrammar = {
 			patterns: [
 				rule(
 					'variable.language.processor.mlgc',
-					'@\\b(this|thisx|thisy|links|ipt|pi|e|degToRad|radToDeg|time|tick|second|minute|waveNumber|waveTime|mapw|maph|server|client|clientLocale|clientName|clientTeam|clientUnit|clientMobile|blockCount|unitCount|itemCount|liquidCount|unit)\\b',
-					'variable.language.processor.mlgc'
-				),
+					'@\\b(this|thisx|thisy|links|ipt|pi|e|degToRad|radToDeg|time|tick|second|minute|waveNumber|waveTime|mapw|maph|server|client|clientLocale|clientName|clientTeam|clientUnit|clientMobile|blockCount|unitCount|itemCount|liquidCount|unit)\\b'),
 				// A `@name` that is not a known content: `#pragma var(int, @mine)`.
-				rule('variable.other.constant.mlgc', '@[A-Za-z_][A-Za-z0-9_]*', 'variable.other.constant.mlgc'),
+				rule('variable.other.constant.mlgc', '@[A-Za-z_][A-Za-z0-9_]*'),
 			],
 		},
 		instructions: {
 			patterns: [
 				rule(
 					'keyword.control.instruction.mlgc',
-					`\\b(${alternation(INSTRUCTION_LIST)})\\b(?=\\s*\\()`,
-					'keyword.control.instruction.mlgc'
-				),
+					`\\b(${alternation(INSTRUCTION_LIST)})\\b(?=\\s*\\()`),
 			],
 		},
 		'builtin-functions': {
 			patterns: [
 				rule(
 					'support.function.builtin.mlgc',
-					`\\b(${alternation(BUILTIN_FUNCTIONS)})\\b(?=\\s*\\()`,
-					'support.function.builtin.mlgc'
-				),
+					`\\b(${alternation(BUILTIN_FUNCTIONS)})\\b(?=\\s*\\()`),
 			],
 		},
 		types: {
@@ -314,26 +314,22 @@ const mlgcGrammar = {
 					`\\b(${alternation([
 						...Object.keys(TOKEN_TYPE_SPELLINGS),
 						...EXTRA_TYPES,
-					])})\\b`,
-					'storage.type.mlgc'
-				),
+					])})\\b`),
 				// A builtin type as a pointer: `int*`, `device*`.
-				rule('storage.type.pointer.mlgc', '(?<=\\*)\\s*(?=const\\b)', 'storage.type.pointer.mlgc'),
+				rule('storage.type.pointer.mlgc', '(?<=\\*)\\s*(?=const\\b)'),
 			],
 		},
 		keywords: {
 			patterns: [
 				rule(
 					'keyword.control.mlgc',
-					`\\b(${alternation(KEYWORD_LIST)})\\b`,
-					'keyword.control.mlgc'
-				),
+					`\\b(${alternation(KEYWORD_LIST)})\\b`),
 			],
 		},
 		operators: {
 			patterns: [
-				rule('keyword.operator.mlgc', `(?:${Object.keys(OPERATORS).map(escapeForRegex).join('|')})`, 'keyword.operator.mlgc'),
-				rule('keyword.operator.mlgc', '(?:;|,|\\.|\\?|\\(|\\)|\\[|\\]|\\{|\\})', 'keyword.operator.mlgc'),
+				rule('keyword.operator.mlgc', `(?:${Object.keys(OPERATORS).map(escapeForRegex).join('|')})`),
+				rule('keyword.operator.mlgc', '(?:;|,|\\.|\\?|\\(|\\)|\\[|\\]|\\{|\\})'),
 			],
 		},
 	},
@@ -346,7 +342,7 @@ const mlogGrammar = {
 	scopeName: 'source.mlog',
 	fileTypes: ['mlog'],
 	patterns: [
-		rule('comment.line.double-slash.mlog', '^//.*$', 'comment.line.double-slash.mlog'),
+		rule('comment.line.double-slash.mlog', '^//.*$'),
 		{
 			name: 'meta.instruction.mlog',
 			match: '^\\s*([a-z]+)(.*)$',
@@ -358,14 +354,12 @@ const mlogGrammar = {
 		// Instructions and builtin functions both appear as bare words in mlog.
 		rule(
 			'keyword.operator.mlog',
-			`\\b(${alternation([...INSTRUCTION_LIST, ...BUILTIN_FUNCTIONS])})\\b`,
-			'keyword.operator.mlog'
-		),
-		rule('string.quoted.double.mlog', '"[^"]*"', 'string.quoted.double.mlog'),
-		rule('constant.character.mlog', "'[^']'", 'constant.character.mlog'),
-		rule('constant.numeric.mlog', '(?<![\\w-])-?\\d+(\\.\\d+)?\\b', 'constant.numeric.mlog'),
-		rule('variable.language.link.mlog', '\\b[a-zA-Z_][A-Za-z0-9_]*\\b', 'variable.language.link.mlog'),
-		rule('punctuation.separator.mlog', '[ \\t]+', 'punctuation.separator.mlog'),
+			`\\b(${alternation([...INSTRUCTION_LIST, ...BUILTIN_FUNCTIONS])})\\b`),
+		rule('string.quoted.double.mlog', '"[^"]*"'),
+		rule('constant.character.mlog', "'[^']'"),
+		rule('constant.numeric.mlog', '(?<![\\w-])-?\\d+(\\.\\d+)?\\b'),
+		rule('variable.language.link.mlog', '\\b[a-zA-Z_][A-Za-z0-9_]*\\b'),
+		rule('punctuation.separator.mlog', '[ \\t]+'),
 	],
 };
 

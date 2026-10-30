@@ -345,9 +345,26 @@ class BuildService implements vscode.Disposable {
 
 		if (this.cancelled || !request) return;
 		if (!response.ok || !response.success || !response.code) {
-			void vscode.window.showErrorMessage(
-				'Mindustry-C: the build failed. See the Mindustry-C output for the compiler’s messages.'
-			);
+			// The first message is usually the whole story -- "Undeclared
+			// identifier 'message1'" is actionable, "the build failed" is not --
+			// and the rest are one click away in the output channel.
+			const first = response.errors[0];
+			const where =
+				first?.line !== undefined
+					? `${first.line}${first.column !== undefined ? `:${first.column}` : ''}: `
+					: '';
+			const detail = first
+				? ` ${where}${firstLineOf(first.message)}${
+						response.errors.length > 1 ? ` (+${response.errors.length - 1} more)` : ''
+					}`
+				: response.fatalError
+					? ` ${firstLineOf(response.fatalError)}`
+					: '';
+			void vscode.window
+				.showErrorMessage(`Mindustry-C: the build failed.${detail}`, 'Show Output')
+				.then(choice => {
+					if (choice === 'Show Output') this.output.show();
+				});
 			return;
 		}
 
@@ -370,6 +387,12 @@ class BuildService implements vscode.Disposable {
 function formatPosition(line?: number, column?: number): string {
 	if (line === undefined) return '(no position)';
 	return column === undefined ? `${line}` : `${line}:${column}`;
+}
+
+/** The first line of a compiler message, short enough for a notification. */
+function firstLineOf(text: string, limit = 180): string {
+	const line = text.split('\n')[0].trim();
+	return line.length > limit ? `${line.slice(0, limit - 1)}...` : line;
 }
 
 function formatDuration(ms: number): string {

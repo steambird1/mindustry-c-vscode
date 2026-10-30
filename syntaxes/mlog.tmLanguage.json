@@ -8,8 +8,7 @@
 	"patterns": [
 		{
 			"name": "comment.line.double-slash.mlog",
-			"match": "^//.*$",
-			"scope": "comment.line.double-slash.mlog"
+			"match": "^//.*$"
 		},
 		{
 			"name": "meta.instruction.mlog",
@@ -25,33 +24,27 @@
 		},
 		{
 			"name": "keyword.operator.mlog",
-			"match": "\\b(printflush|printchar|drawflush|ucontrol|stricteq|vecalias|getlink|control|ulocate|format|sensor|uradar|lookup|byname|memcpy|remote|veccpy|print|radar|ubind|write|adiff|floor|memsp|draw|wait|stop|jump|read|acos|asin|atan|ceil|rand|sqrt|asm|set|end|abs|cos|max|min|pow|sin|tan|op)\\b",
-			"scope": "keyword.operator.mlog"
+			"match": "\\b(printflush|printchar|drawflush|ucontrol|stricteq|vecalias|getlink|control|ulocate|format|sensor|uradar|lookup|byname|memcpy|remote|veccpy|print|radar|ubind|write|adiff|floor|memsp|draw|wait|stop|jump|read|acos|asin|atan|ceil|rand|sqrt|asm|set|end|abs|cos|max|min|pow|sin|tan|op)\\b"
 		},
 		{
 			"name": "string.quoted.double.mlog",
-			"match": "\"[^\"]*\"",
-			"scope": "string.quoted.double.mlog"
+			"match": "\"[^\"]*\""
 		},
 		{
 			"name": "constant.character.mlog",
-			"match": "'[^']'",
-			"scope": "constant.character.mlog"
+			"match": "'[^']'"
 		},
 		{
 			"name": "constant.numeric.mlog",
-			"match": "(?<![\\w-])-?\\d+(\\.\\d+)?\\b",
-			"scope": "constant.numeric.mlog"
+			"match": "(?<![\\w-])-?\\d+(\\.\\d+)?\\b"
 		},
 		{
 			"name": "variable.language.link.mlog",
-			"match": "\\b[a-zA-Z_][A-Za-z0-9_]*\\b",
-			"scope": "variable.language.link.mlog"
+			"match": "\\b[a-zA-Z_][A-Za-z0-9_]*\\b"
 		},
 		{
 			"name": "punctuation.separator.mlog",
-			"match": "[ \\t]+",
-			"scope": "punctuation.separator.mlog"
+			"match": "[ \\t]+"
 		}
 	]
 }

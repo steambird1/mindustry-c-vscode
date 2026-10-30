@@ -13,6 +13,29 @@ Logic (`mlog`).
 - **Syntax highlighting generated from the compiler's own token tables**, so it
   follows the dialect rather than generic C.
 
+## Hello, World
+
+```c
+auto device message1;   // a block linked to the processor
+
+int main(void) {
+    print("Hello, World!");
+    printflush(message1);
+}
+```
+
+`message1` is a processor block, not a keyword: like `cell1` or `switch1` it has
+to be declared before it can be used. Leaving that line out is an ordinary
+`Undeclared identifier 'message1'` error, not a compiler fault.
+
+Without a block to flush to, this is enough:
+
+```c
+int main(void) {
+    print("Hello, World!");
+}
+```
+
 ## Trying it
 
 ### From source, with F5
