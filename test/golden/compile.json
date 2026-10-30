@@ -1,5 +1,5 @@
 {
-	"compiler": "a23e3c9",
+	"compiler": "b3c3a30",
 	"files": {
 		"sample1.c": {
 			"success": true,
@@ -13,8 +13,8 @@
 		},
 		"test1.c": {
 			"success": true,
-			"hash": "581ef177c2eb",
-			"lines": 160,
+			"hash": "4dca8d8bee8d",
+			"lines": 162,
 			"errors": [],
 			"warnings": [
 				"34:8 Condition expression should be of type 'bool'",
@@ -30,8 +30,8 @@
 		},
 		"test10.c": {
 			"success": true,
-			"hash": "16febef7218a",
-			"lines": 160,
+			"hash": "ac1607fe76f1",
+			"lines": 162,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -54,16 +54,16 @@
 		},
 		"test11a.c": {
 			"success": true,
-			"hash": "a25d26d2c49b",
-			"lines": 92,
+			"hash": "e4dd7a0b6074",
+			"lines": 94,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
 		},
 		"test12.c": {
 			"success": true,
-			"hash": "8dab414708dd",
-			"lines": 103,
+			"hash": "4bacf82d7d4d",
+			"lines": 105,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -110,24 +110,24 @@
 		},
 		"test16.c": {
 			"success": true,
-			"hash": "5e1e645cb5f5",
-			"lines": 31,
+			"hash": "44c9d67af512",
+			"lines": 32,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
 		},
 		"test16b.c": {
 			"success": true,
-			"hash": "13235a30e09a",
-			"lines": 52,
+			"hash": "530c4be496fc",
+			"lines": 54,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
 		},
 		"test16c.c": {
 			"success": true,
-			"hash": "8cdbd15ab9dc",
-			"lines": 62,
+			"hash": "5cee9677bf82",
+			"lines": 67,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -160,16 +160,16 @@
 		},
 		"test1a.c": {
 			"success": true,
-			"hash": "638f7947ab05",
-			"lines": 138,
+			"hash": "e1c044e92114",
+			"lines": 140,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
 		},
 		"test1b.c": {
 			"success": true,
-			"hash": "965ec0e7532b",
-			"lines": 94,
+			"hash": "7ac7ea0ecfce",
+			"lines": 100,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -216,8 +216,8 @@
 		},
 		"test20b.c": {
 			"success": true,
-			"hash": "2c892b3aeae7",
-			"lines": 32,
+			"hash": "8c9f52dcb2bb",
+			"lines": 33,
 			"errors": [],
 			"warnings": [
 				"[object Object]:undefined Condition always true in if statement"
@@ -226,16 +226,16 @@
 		},
 		"test20c.c": {
 			"success": true,
-			"hash": "bf7acdd67002",
-			"lines": 42,
+			"hash": "e8ae0cd129a5",
+			"lines": 46,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
 		},
 		"test20d.c": {
 			"success": true,
-			"hash": "3e7f8a72c6c0",
-			"lines": 31,
+			"hash": "5f4bd862cc5b",
+			"lines": 32,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -250,8 +250,8 @@
 		},
 		"test20f.c": {
 			"success": true,
-			"hash": "c2fca4284c59",
-			"lines": 31,
+			"hash": "64c39afdd8a5",
+			"lines": 32,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -356,8 +356,8 @@
 		},
 		"test29.c": {
 			"success": true,
-			"hash": "5f2313f136d6",
-			"lines": 95,
+			"hash": "e2e3a691cdcb",
+			"lines": 97,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -380,8 +380,8 @@
 		},
 		"test30.c": {
 			"success": true,
-			"hash": "d75bd0ded305",
-			"lines": 127,
+			"hash": "6842f973c0f5",
+			"lines": 129,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -400,8 +400,8 @@
 		},
 		"test32.c": {
 			"success": true,
-			"hash": "8a4e751c5746",
-			"lines": 39,
+			"hash": "6eec1e36cfa8",
+			"lines": 41,
 			"errors": [],
 			"warnings": [
 				"[object Object]:undefined Condition always true in if statement"
@@ -410,8 +410,8 @@
 		},
 		"test34.c": {
 			"success": true,
-			"hash": "8cdf2b0d02da",
-			"lines": 38,
+			"hash": "f1003e275359",
+			"lines": 39,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -450,8 +450,8 @@
 		},
 		"test36c.c": {
 			"success": true,
-			"hash": "94bb0cad774c",
-			"lines": 130,
+			"hash": "e59a1524ce17",
+			"lines": 132,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -514,8 +514,8 @@
 		},
 		"test7d.c": {
 			"success": true,
-			"hash": "fb94e545cf0f",
-			"lines": 54,
+			"hash": "017a88f33645",
+			"lines": 57,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -530,8 +530,8 @@
 		},
 		"test7f.c": {
 			"success": true,
-			"hash": "539bb8ab022c",
-			"lines": 55,
+			"hash": "924d8f6785d1",
+			"lines": 58,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -554,8 +554,8 @@
 		},
 		"test9.c": {
 			"success": true,
-			"hash": "e78c18adbf63",
-			"lines": 70,
+			"hash": "d721a984b23b",
+			"lines": 72,
 			"errors": [],
 			"warnings": [],
 			"fatal": null

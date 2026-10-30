@@ -200,36 +200,32 @@ silently:
   semantic analyser.** `visitFunctionCall` read a property of `undefined`.
   Patch 0001's `try` caught it, so the run came back `ast: null` with an
   *empty* error list — a file with a mistake in it looked perfectly clean.
-  **Fixed in the compiler** by narrowing the overload set on argument count
-  before the arguments are visited, plus a bounds guard on the parameter list
-  (`preselectOverloadByArity` in `mindcSemantic.js`). The first guard alone was
-  not enough: a call matching *no* arity still ran the type-check loop past the
-  end of the list, which is the same read from the same method. Both loops are
-  guarded now, and `test/index.test.ts` calls both arities — and an arity that
-  matches nothing — so a reintroduction fails there rather than in the editor.
-- **A typedef's name is not in the program scope.** `scope.lookup('point_t')`
-  returns `null` even though `point_t` resolves everywhere else, so a typedef's
+  **Fixed upstream in `b3c3a30`**: `preselectOverloadByArity` narrows the
+  overload set on argument count before the arguments are visited, and a bounds
+  guard covers a call that matches no arity (the first guard alone was not
+  enough). This repository carried the same fix in its bundled compiler while
+  it was still a local patch; that copy was dropped when the compiler was
+  synced. `test/index.test.ts` calls both arities, and an arity that matches
+  nothing, so a reintroduction fails there rather than in the editor.
+- **A typedef's name is not in the program scope.** `scope.lookup('myint')`
+  returns `null` even though `myint` resolves everywhere else, so a typedef's
   type is read out of the text between the `typedef` keyword and the name.
 - **The dialect has no `enum`.** `enum colour { red, green };` is a parse error
-  (`Expected variable name in declaration`).
-- **A `for` initialiser must be an expression, not a declaration.**
-  `for (int i = 0; i < 3; i++)` reports `Unexpected token in expression: INT
-  'int'`, then an internal parser error and five cascading diagnostics;
-  `for (; t < 3; t++)` fails too, because the parser expects an expression
-  first either way. Checked against `HEAD` with the patches applied and the
-  behaviour is identical, so this is the compiler's and not something this
-  repository introduced. The extension shows whatever the parser produced,
-  internal error included.
+  (`Expected variable name in declaration`). Still true in `b3c3a30`.
 - **`@`-constants parse as identifiers named after the sigil** (`@copper`), with
   no symbol. They are left out of the index — indexing them unresolved would
   make hover claim a perfectly valid content id is undeclared — and answered from
   the generated tables instead.
-- **esbuild warns about the compiler's own source**: a duplicate key
-  `POINTER_TYPE` in `mindcBase.js`, a duplicate `REMOTE` in `mindcLexer.js`, a
-  duplicate member `raw_replace` in `mindcInstruction.js`, and a duplicate
-  `AssignmentExpression` case in `mindcOptimizer.js`. `scripts/build.mjs`
+- **esbuild warns about the compiler's own source**: a duplicate `REMOTE` in
+  `mindcLexer.js`, a duplicate member `raw_replace` in `mindcInstruction.js`, and
+  a duplicate `AssignmentExpression` case in `mindcOptimizer.js`. `scripts/build.mjs`
   collapses these into one `note:` line so they do not drown out our own
-  warnings.
+  warnings. The duplicate `POINTER_TYPE` key that used to be on this list was
+  removed upstream.
+
+One gap once recorded here is closed upstream as of `b3c3a30`: `for (int i = 0;
+…)` parses and compiles, empty clauses (`for (; t < 3; t++)`) included. Re-checked
+against the synced compiler; the extension needed no change for it.
 
 ### Known limitation: which file a diagnostic belongs to
 
