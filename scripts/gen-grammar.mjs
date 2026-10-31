@@ -43,8 +43,12 @@ const { CONTENT_ORDER, DEFAULT_CONTENT_NAMES, CONTENT_CATEGORIES } = await loadC
  * The compiler keeps its builtin function table inside
  * `SemanticAnalyzer#initializeBuiltinFunctions`, as data rather than as an
  * export. Rather than duplicating that list here (which would rot the moment a
- * builtin is added), read the source and pull the names out. This is a build
+ * builtin is added), read the source and pull the entries out. This is a build
  * script, not runtime code, and a parse failure is loud.
+ *
+ * Each entry is one line:
+ *
+ *   { name: 'draw', returnType: 'void', parameters: ['string_t'], hasVarArgs: true },
  */
 const semanticSource = fs.readFileSync(
 	path.join(compilerDir, 'mindcSemantic.js'),
@@ -57,14 +61,30 @@ if (!builtinBlock) {
 	console.error('Could not find the builtin table in mindcSemantic.js');
 	process.exit(1);
 }
-const BUILTIN_FUNCTIONS = [
-	...new Set(
-		[...builtinBlock[1].matchAll(/\{\s*name:\s*'([^']+)'/g)].map(match => match[1])
-	),
-].sort();
-if (BUILTIN_FUNCTIONS.length < 20) {
+const BUILTIN_ENTRIES = builtinBlock[1]
+	.split('\n')
+	.filter(line => /\{\s*name:/.test(line))
+	.map(line => {
+		const name = line.match(/name:\s*'([^']+)'/)?.[1];
+		const returnType = line.match(/returnType:\s*'([^']+)'/)?.[1];
+		const parameters = line.match(/parameters:\s*\[([^\]]*)\]/)?.[1];
+		if (!name || !returnType || parameters === undefined) {
+			console.error(`Could not parse a builtin entry:\n  ${line.trim()}`);
+			process.exit(1);
+		}
+		return {
+			name,
+			returnType,
+			parameters: [...parameters.matchAll(/'([^']+)'/g)].map(match => match[1]),
+			hasVarArgs: /hasVarArgs:\s*true/.test(line),
+			special: /special:\s*'[^']+'/.test(line),
+		};
+	});
+const BUILTIN_FUNCTIONS = [...new Set(BUILTIN_ENTRIES.map(entry => entry.name))].sort();
+if (BUILTIN_FUNCTIONS.length < 20 || BUILTIN_ENTRIES.length !== BUILTIN_FUNCTIONS.length) {
 	console.error(
-		`Only found ${BUILTIN_FUNCTIONS.length} builtins; the compiler's table probably moved.`
+		`Found ${BUILTIN_ENTRIES.length} builtin entries and ${BUILTIN_FUNCTIONS.length} names; ` +
+			"the compiler's table probably moved."
 	);
 	process.exit(1);
 }
@@ -91,6 +111,27 @@ if (PROCESSOR_VARIABLES.length < 10) {
 	process.exit(1);
 }
 
+/*
+ * Some types are not keywords: the parser recognises them by name while it
+ * parses a declaration (`device`, `content_t`, `string_t`, ...). That list is
+ * the same gate a declaration goes through, so reading it keeps the grammar
+ * and completion in step with the compiler -- and it had already drifted: the
+ * hand-kept type list was missing `string_t` and the `*_t` content types.
+ */
+const parserSource = fs.readFileSync(path.join(compilerDir, 'mindcParser.js'), 'utf8');
+const specialsBlock = parserSource.match(/const specials = \[([^\]]*)\]/);
+if (!specialsBlock) {
+	console.error("Could not find the parser's special type list in mindcParser.js");
+	process.exit(1);
+}
+const SPECIAL_TYPES = [...specialsBlock[1].matchAll(/'([^']+)'/g)].map(match => match[1]);
+if (SPECIAL_TYPES.length < 5) {
+	console.error(
+		`Only found ${SPECIAL_TYPES.length} special types; the parser's list probably moved.`
+	);
+	process.exit(1);
+}
+
 /* ------------------------------------------------------------------ *
  * 1. Vocabulary
  * ------------------------------------------------------------------ */
@@ -101,67 +142,43 @@ const KEYWORD_LIST = Object.keys(KEYWORDS).filter(word => !word.startsWith('#'))
 // `draw`, `print`, `read`, ... are special instructions, and get their own scope.
 const INSTRUCTION_LIST = Object.keys(SPECIAL_INSTRUCTIONS);
 
-// Builtin functions: the instruction set plus the library calls the semantic
-// analyser registers. `BUILTIN_FUNCTIONS` is read from the compiler above.
-const BUILTIN_SIGNATURES = {
-	print: 'void print(…)',
-	printflush: 'void printflush(device)',
-	draw: 'void draw(color, …)',
-	drawflush: 'void drawflush(device)',
-	sensor: 'null_t sensor(device, content_t)',
-	getlink: 'device getlink(int)',
-	control: 'void control(char, device, …)',
-	radar: 'device radar(char, char, char, char, device, int)',
-	set: 'void set(…)',
-	op: 'void op(…)',
-	jump: 'void jump(…)',
-	read: 'null_t read(…)',
-	write: 'void write(…)',
-	wait: 'void wait(float)',
-	stop: 'void stop()',
-	end: 'void end()',
-	ubind: 'void ubind(content_t)',
-	ucontrol: 'void ucontrol(…)',
-	uradar: 'device uradar(char, char, char, char, int, int)',
-	ulocate: 'int ulocate(…)',
-	lookup: 'content_t lookup(char, int)',
-	asm: 'null_t asm(char)',
-	sin: 'float sin(float)',
-	cos: 'float cos(float)',
-	tan: 'float tan(float)',
-	min: 'float min(float, float)',
-	max: 'float max(float, float)',
-	pow: 'float pow(float, float)',
-	sqrt: 'float sqrt(float)',
-	abs: 'float abs(float)',
-	ceil: 'float ceil(long)',
-	floor: 'float floor(long)',
-	rand: 'float rand(float)',
-	memcpy: 'void memcpy(void*, void*, unsigned)',
-	memsp: 'void* memsp(device, int)',
-	byname: 'void* byname(…)',
-	remote: 'void* remote(…)',
-	vecalias: 'void vecalias(…)',
-	veccpy: 'void veccpy(…)',
-};
+/*
+ * Signatures for completion detail and signature help, rendered from the
+ * compiler's own table. They used to be kept by hand here, and had already
+ * gone stale: `control`, `radar`, `uradar`, `lookup` and `asm` still said
+ * `char` after the dialect moved to `string_t`.
+ *
+ * A `special` builtin takes its arguments in a form the table does not list
+ * (`set`, `op`, `jump`, ...), so it keeps the `…` placeholder unless the table
+ * gives it real parameters.
+ */
+const BUILTIN_SIGNATURES = Object.fromEntries(
+	BUILTIN_ENTRIES.map(entry => {
+		const varargs = entry.hasVarArgs || (entry.special && entry.parameters.length === 0);
+		const parameters = entry.parameters.join(', ');
+		const list = varargs ? (parameters ? `${parameters}, …` : '…') : parameters;
+		return [entry.name, `${entry.returnType} ${entry.name}(${list})`];
+	})
+);
 
-// Types the dialect adds on top of C: `device` is a connected building,
-// `content_t` a content constant, `null_t` the absence of a value.
+// Types the dialect adds on top of C: the parser's special types, plus the
+// qualifiers and header typedefs that read like types: `device` is a connected
+// building, `content_t` a content constant, `null_t` the absence of a value.
 const EXTRA_TYPES = [
-	'device',
-	'content_t',
-	'null_t',
-	'pdlist_t',
-	'bool',
-	'inline',
-	'auto',
-	'near',
-	'byname',
-	'remote',
-	'widthof',
-	'true',
-	'false',
-	'null',
+	...new Set([
+		...SPECIAL_TYPES,
+		'pdlist_t',
+		'bool',
+		'inline',
+		'auto',
+		'near',
+		'byname',
+		'remote',
+		'widthof',
+		'true',
+		'false',
+		'null',
+	]),
 ];
 
 /* ------------------------------------------------------------------ *
@@ -336,7 +353,7 @@ const mlgcGrammar = {
 				rule(
 					'storage.type.mlgc',
 					`\\b(${alternation([
-						...Object.keys(TOKEN_TYPE_SPELLINGS),
+						...TOKEN_TYPE_SPELLINGS,
 						...EXTRA_TYPES,
 					])})\\b`),
 				// A builtin type as a pointer: `int*`, `device*`.

@@ -91,6 +91,10 @@ same resolver and the child's own `filename`) or `{ extension }` (a `.js`
 compiler extension that the host already loaded). With no resolver the old HTTP
 path is used unchanged, so `main.html` keeps working.
 
+The child lexer inherits the parent's options (`...this.lexerOptions`) as well
+as the resolver, so an include is read under the same `legacy_char_string` mode
+as the file that pulled it in.
+
 Tokens coming from an include carry `location.filename`, which is what lets the
 extension follow includes at all.
 
@@ -125,6 +129,14 @@ Result shapes the adapter relies on:
 | a diagnostic | `{ message, line, column }` — 1-based, `line`/`column` may be absent |
 | a token | `{ type, value, raw, location: { line, column, index, filename? } }` |
 | `AttributeClass` | `getAttribute(k)`, `setAttribute(k, v)`, `hasAttribute(k)` |
+
+The `Lexer` constructor takes an `options` object (`includeResolver`,
+`filename`, `legacyCharString`). The adapter installs the include resolver on the
+lexer the `Compiler` constructor already built rather than replacing it: that
+lexer holds `__MINDC_TARGET_VERSION__` in its macro table and the
+`legacy_char_string` decision. Replacing it silently makes every `#if` over the
+target version take the wrong branch, and the bundled `string.h` is gated on
+exactly such a test.
 
 ## How the compiler is loaded
 
@@ -224,6 +236,35 @@ back via a refresh once the analysis lands. A document with no index at all
 (just opened) gets an empty answer and the same refresh — the client asks
 immediately on open and does not ask again on its own, so without it a file
 keeps its plain TextMate colours until the next edit or theme change.
+
+### String types
+
+`char` and the native Mindustry string are different types, and the editor has
+to keep them apart:
+
+- `string_t` is the one-cell machine string. It is **not** a keyword: the parser
+  recognises it by name, in the same list as `device` and `content_t`
+  (`const specials = [...]`). `npm run gen` reads that list, so the grammar,
+  completion and rename protection follow the compiler instead of a hand copy
+  (which had already missed `string_t` and the `*_t` content types).
+- `char` is an ordinary one-cell number again. `char*` is a real block+offset
+  pointer, and only `const char*` may point at a literal: `char *p = "hi"` is
+  refused, with a message naming the alternatives. The extension offers all
+  three as quick fixes — a `const char*` view, the one-cell `string_t`, or a
+  `char name[]` copy.
+- A literal materialised for a `const char*` becomes a hidden `__strlit_N`
+  declaration in `ast.globalDeclarations`. The index skips it for free: a
+  declaration is only recorded when the source text at its location spells its
+  name, and the hidden name appears nowhere.
+- `#pragma legacy_char_string` makes the lexer read `char` as `string_t` for a
+  migration period. The compiler decides this from the source, so the extension
+  does nothing; the options are inherited by included headers too.
+- `include/string.h` (`string_view`, `sv_at`, `sv_len`, `sv_print`,
+  `concat_to_message`, and the C buffer helpers) ships with the compiler.
+  `scripts/build.mjs` copies `include/` to `out/include`, and the extension
+  appends that directory after the user's `includePaths`, so
+  `#include <string.h>` resolves in an installed extension while a project
+  header of the same name still wins.
 
 ### Checking these claims against the compiler
 
@@ -373,13 +414,22 @@ the newest text, not that the wait is short.
 
 `npm run gen` reads the compiler directly (no bundling needed) and writes:
 
-- `syntaxes/mlgc.tmLanguage.json` — keyword, instruction, operator and
+- `syntaxes/mlgc.tmLanguage.json` — keyword, instruction, operator, type and
   `@content` rules generated from `KEYWORDS`, `SPECIAL_INSTRUCTIONS`,
-  `OPERATORS`, `PUNCTUATORS`, `CONTENT_ORDER` and `DEFAULT_CONTENT_IDS`;
-- `src/compiler/generatedTables.ts` — the same tables in a shape the extension
-  can import.
+  `OPERATORS`, `PUNCTUATORS`, `CONTENT_ORDER` and `DEFAULT_CONTENT_IDS`, plus
+  the parser's `specials` list for types that are not keywords (`string_t`,
+  `device`, `content_t`, `item_t`, …);
+- `src/compiler/generated/tables.json` — the same tables in a shape the
+  extension can import, including builtin signatures rendered from
+  `SemanticAnalyzer#initializeBuiltinFunctions` (`returnType`, `parameters`,
+  `hasVarArgs`).
 
 `npm run gen:check` fails if either is stale, so the grammar in the repository
 always matches the compiler it ships with. The compiler stays the single source
-of truth for its vocabulary: a new content id shows up in the grammar after
-`npm run gen` with no hand-editing.
+of truth for its vocabulary: a new content id, special type or builtin shows up
+in the grammar and in completion after `npm run gen` with no hand-editing.
+
+`scripts/build.mjs` also copies the compiler's `include/` directory to
+`out/include`, which is what makes `#include <string.h>` resolve in an installed
+extension. The directory is searched after the user's `includePaths`, so a
+project's own header of the same name wins.

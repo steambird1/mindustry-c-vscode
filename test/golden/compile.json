@@ -1,5 +1,5 @@
 {
-	"compiler": "3928a04",
+	"compiler": "46a37eb",
 	"files": {
 		"sample1.c": {
 			"success": true,
@@ -184,8 +184,8 @@
 		},
 		"test1d.c": {
 			"success": true,
-			"hash": "341b097278bd",
-			"lines": 44,
+			"hash": "45092cdb2164",
+			"lines": 38,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -356,8 +356,8 @@
 		},
 		"test29.c": {
 			"success": true,
-			"hash": "dd42000fcfd8",
-			"lines": 99,
+			"hash": "e2e3a691cdcb",
+			"lines": 97,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -372,8 +372,8 @@
 		},
 		"test29b.c": {
 			"success": true,
-			"hash": "e0b90bc8e782",
-			"lines": 52,
+			"hash": "db48dc0b1c9a",
+			"lines": 50,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -434,16 +434,16 @@
 		},
 		"test36a.c": {
 			"success": true,
-			"hash": "7ff1c903ed43",
-			"lines": 53,
+			"hash": "7e22101f6c45",
+			"lines": 43,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
 		},
 		"test36b.c": {
 			"success": true,
-			"hash": "981516cf71b1",
-			"lines": 77,
+			"hash": "41b81dc35cb2",
+			"lines": 76,
 			"errors": [],
 			"warnings": [],
 			"fatal": null

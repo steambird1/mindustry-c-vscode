@@ -315,10 +315,13 @@ function createCompiler(options: RunOptions, tracker: IncludeTracker): CompilerL
 			options.filePath ?? null,
 			tracker
 		);
-		compiler.lexer = new loaded.Lexer(options.source, {}, false, {}, {
-			includeResolver,
-			filename: options.filePath ?? null,
-		});
+		// Install the resolver on the compiler's own lexer instead of replacing
+		// it. The constructor puts `__MINDC_TARGET_VERSION__` in this lexer's
+		// macro table and records options such as `legacy_char_string` on it; a
+		// fresh lexer would silently lose both, so `#if` over the target version
+		// would take the wrong branch.
+		compiler.lexer.includeResolver = includeResolver;
+		compiler.lexer.filename = options.filePath ?? null;
 	}
 	return compiler;
 }

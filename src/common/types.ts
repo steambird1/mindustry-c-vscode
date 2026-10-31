@@ -63,6 +63,13 @@ export interface EffectiveConfig {
 	profileName: string;
 	targetVersion: number;
 	includePaths: string[];
+	/**
+	 * Header directories that ship with the extension (its copy of the
+	 * compiler's `include/`), searched after the user's paths so a project
+	 * header of the same name wins. Set by the extension host; absent in the
+	 * manager's own output, which only knows about `mlgc.json`.
+	 */
+	builtinIncludePaths?: string[];
 	memoryBlocks: MemoryBlockConfig[];
 	compilerOptions: Required<CompilerOptionsConfig>;
 	idOverrides: IdOverrides;

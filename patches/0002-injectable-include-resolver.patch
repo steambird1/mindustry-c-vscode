@@ -1,41 +1,38 @@
 diff --git a/mindcLexer.js b/mindcLexer.js
-index 15f84d4..ee4e78f 100644
+index 50057ff..4d98341 100644
 --- a/mindcLexer.js
 +++ b/mindcLexer.js
-@@ -349,7 +349,17 @@ export const PUNCTUATORS = {
+@@ -351,6 +351,17 @@ export const PUNCTUATORS = {
  
  
  export class Lexer {
--    constructor(sourceCode, macros = {}, suppressMacroExpansion = false, macroParams = {}) {
 +    /**
 +     * @param {string} sourceCode
 +     * @param {Object} macros
 +     * @param {boolean} suppressMacroExpansion
 +     * @param {Object} macroParams
-+     * @param {{ includeResolver?: (filename: string, from: string?) => Promise<any>, filename?: string }} [options]
-+     *   `options.includeResolver` 供非浏览器环境（编辑器扩展、Node）解析 `#include`。
-+     *   不提供时保持原行为：走 `fetch('/include/...')`。
-+     *   `options.filename` 是本文件的路径，会传给 resolver 并写进 token 的 location。
++     * @param {{ includeResolver?: (filename: string, from: string?) => Promise<any>, filename?: string, legacyCharString?: boolean }} [options]
++     *   `options.includeResolver` lets a non-browser host (the VS Code extension,
++     *   Node) resolve `#include`. Without it the HTTP path is used unchanged.
++     *   `options.filename` is this file's path: it is passed to the resolver and
++     *   recorded on every token location.
 +     */
-+    constructor(sourceCode, macros = {}, suppressMacroExpansion = false, macroParams = {}, options = {}) {
+     constructor(sourceCode, macros = {}, suppressMacroExpansion = false, macroParams = {}, options = {}) {
          this.sourceCode = sourceCode;
          this.position = 0;
-         this.line = 1;
-@@ -357,7 +367,12 @@ export class Lexer {
+@@ -358,6 +369,11 @@ export class Lexer {
+         this.column = 1;
          this.tokens = [];
          this.errors = [];
-         this.suppressMacroExpansion = suppressMacroExpansion;
--        
 +        /**
 +         * @type {(filename: string, from: string?) => Promise<{text: string, path: string?} | {extension: any} | null>}
 +         */
 +        this.includeResolver = options?.includeResolver ?? null;
 +        this.filename = options?.filename ?? null;
-+
-         // 预处理器状态
-         this.macros = {...macros, '__MINDUSTRY__': '1'}; // 存储宏定义 {name: value}
-         this.macroParams = {...macroParams};
-@@ -1125,6 +1140,14 @@ export class Lexer {
+         this.suppressMacroExpansion = suppressMacroExpansion;
+ 		/*
+ 		Legacy entry: before `string_t` existed, `char` was the native string
+@@ -1135,6 +1151,14 @@ export class Lexer {
          const match = args.trim().match(/^["<](.+?)[">]$/);
          if (match) {
              const filename = match[1];
@@ -50,18 +47,20 @@ index 15f84d4..ee4e78f 100644
              try {
                  // 假设有同步获取文本的方法（在实际浏览器中需使用异步 fetch 并配合 async/await）
                  
-@@ -1183,6 +1206,68 @@ export class Lexer {
+@@ -1202,6 +1226,75 @@ export class Lexer {
          }
-         
      }
-+
+ 
 +    /**
-+     * `#include` 的宿主注入版实现：文本由 `this.includeResolver` 提供（编辑器扩展
-+     * 从磁盘读，解析结果与下面 fetch 分支一致），`.js` 扩展则由 resolver 直接
-+     * 交出已加载好的 extension 对象。
++     * `#include` with a host-supplied resolver.
 +     *
-+     * @param {string} filename 指令里写的（不含引号/尖括号）
-+     * @param {*} location 指令所在位置
++     * The VS Code extension reads files from disk and passes the text here; the
++     * browser path above (`fetch('/include/...')`) is untouched. A `.js`
++     * include is a compiler extension the host has already loaded, so it is
++     * handed over as an object instead of source text.
++     *
++     * @param {string} filename the name written in the directive
++     * @param {*} location the directive's location
 +     */
 +    async handleIncludeWithResolver(filename, location) {
 +        let resolved;
@@ -77,14 +76,18 @@ index 15f84d4..ee4e78f 100644
 +        }
 +
 +        try {
-+            // A `.js` include is a compiler extension: the host has loaded it.
 +            if (resolved.extension) {
 +                this.extraExtensions.push(resolved.extension);
 +                return;
 +            }
 +
 +            const includedPath = resolved.path ?? filename;
++            /*
++            Carry the lexer's options too -- `legacy_char_string` is one of
++            them -- so an included header is read exactly like its includer.
++            */
 +            const includedLexer = new Lexer(resolved.text, this.macros, false, this.macroParams, {
++                ...this.lexerOptions,
 +                includeResolver: this.includeResolver,
 +                filename: includedPath
 +            });
@@ -116,6 +119,7 @@ index 15f84d4..ee4e78f 100644
 +            this.addError(`Cannot open included file: ${filename}`, location);
 +        }
 +    }
-     
-     // 辅助方法：仅跳过空白，不跳过换行（用于预处理器行内）
-     skipWhitespaceOnly() {
++
+     // 修改现有方法，在 skipping 状态下跳过普通 token 的生成（但不跳过移动指针和注释）
+     readString() {
+         if (this.skipping) {

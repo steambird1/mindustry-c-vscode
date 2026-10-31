@@ -51,7 +51,12 @@ async function run(request: BuildRequest): Promise<void> {
 			target: {
 				targetVersion: request.config.targetVersion,
 				memoryBlocks: request.config.memoryBlocks,
-				includePaths: request.config.includePaths,
+				// User paths first, then the headers that ship with the
+				// extension: a project header of the same name wins.
+				includePaths: [
+					...request.config.includePaths,
+					...(request.config.builtinIncludePaths ?? []),
+				],
 			},
 			filePath: access.pathOf(request.uri),
 			readFile: access.readFile,

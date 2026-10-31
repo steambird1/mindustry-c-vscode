@@ -882,7 +882,20 @@ export interface QuickFix {
 	edit: WorkspaceEdit;
 }
 
+/** An LSP diagnostic carries its range; the analyser's own shape does not. */
+export interface ActionDiagnostic extends Pick<CompilerDiagnostic, 'message'> {
+	range?: { start: Position };
+}
+
 const UNDECLARED_IDENTIFIER = /^Undeclared identifier '([^']+)'$/;
+
+/*
+ * `char *p = "hi"` is refused: the text is read-only. The message names the
+ * variable and the alternatives, so a fix can locate the declaration without
+ * guessing which one the user meant.
+ */
+const MUTABLE_CHAR_LITERAL = /^Cannot initialize 'char\s*\*[^']*' with a string literal/;
+const MUTABLE_CHAR_LITERAL_NAME = /'char ([A-Za-z_]\w*)\[\] =/;
 
 /**
  * Fixes for the diagnostics the client asked about.
@@ -891,35 +904,131 @@ const UNDECLARED_IDENTIFIER = /^Undeclared identifier '([^']+)'$/;
  * keyword, so it has to be declared at file scope. Only names ending in a digit
  * are offered the fix -- linked blocks always carry an index, and a bare typo
  * like `helper` should not silently become a device declaration.
+ *
+ * A string literal in a mutable `char*` declaration is the other: the text is
+ * read-only, so the declaration can be a `const char*` view, the one-cell
+ * `string_t` value, or a `char[]` copy. All three are offered; the choice is
+ * about what the program does with the text, which the compiler cannot know.
  */
 export function quickFixes(
 	document: IndexedDocument,
-	diagnostics: readonly Pick<CompilerDiagnostic, 'message'>[]
+	diagnostics: readonly ActionDiagnostic[]
 ): QuickFix[] {
 	const actions: QuickFix[] = [];
 	const insertion = positionIn(document.text, declarationInsertionOffset(document.text));
 
 	for (const diagnostic of diagnostics) {
 		const match = UNDECLARED_IDENTIFIER.exec(diagnostic.message);
-		if (!match) continue;
-		const name = match[1];
-		if (!/\d$/.test(name)) continue;
-		actions.push({
-			title: `Declare '${name}' as a processor block: auto device ${name};`,
+		if (match) {
+			const name = match[1];
+			if (!/\d$/.test(name)) continue;
+			actions.push({
+				title: `Declare '${name}' as a processor block: auto device ${name};`,
+				diagnostic: diagnostic.message,
+				edit: {
+					changes: {
+						[document.uri]: [
+							{
+								range: { start: insertion, end: insertion },
+								newText: `auto device ${name};\n`,
+							},
+						],
+					},
+				},
+			});
+			continue;
+		}
+
+		actions.push(...mutableCharFixes(document, diagnostic));
+	}
+	return actions;
+}
+
+/** The three ways to keep `"hi"` in a `char*` declaration. */
+function mutableCharFixes(document: IndexedDocument, diagnostic: ActionDiagnostic): QuickFix[] {
+	if (!MUTABLE_CHAR_LITERAL.test(diagnostic.message)) return [];
+	const name = MUTABLE_CHAR_LITERAL_NAME.exec(diagnostic.message)?.[1];
+	const start = diagnostic.range?.start;
+	if (!name || !start) return [];
+
+	const literal = offsetOf(document.text, start);
+	const spot = charPointerBefore(document.text, literal, name);
+	if (!spot) return [];
+
+	const run = (offset: number) => positionIn(document.text, offset);
+	const type = { start: run(spot.typeStart), end: run(spot.starEnd) };
+	const nameEnd = run(spot.nameStart + name.length);
+	const spaced = (text: string) =>
+		/\s/.test(document.text[spot.starEnd] ?? '') ? text : `${text} `;
+
+	return [
+		{
+			title: `Make '${name}' a read-only view: const char *${name}`,
+			diagnostic: diagnostic.message,
+			edit: { changes: { [document.uri]: [{ range: type, newText: 'const char *' }] } },
+		},
+		{
+			title: `Use the native string type: string_t ${name}`,
+			diagnostic: diagnostic.message,
+			edit: {
+				changes: {
+					[document.uri]: [{ range: type, newText: spaced('string_t') }],
+				},
+			},
+		},
+		{
+			title: `Copy the text into a mutable array: char ${name}[]`,
 			diagnostic: diagnostic.message,
 			edit: {
 				changes: {
 					[document.uri]: [
-						{
-							range: { start: insertion, end: insertion },
-							newText: `auto device ${name};\n`,
-						},
+						{ range: type, newText: spaced('char') },
+						{ range: { start: nameEnd, end: nameEnd }, newText: '[]' },
 					],
 				},
 			},
-		});
+		},
+	];
+}
+
+interface CharPointerSpot {
+	/** Offset of the `char` keyword. */
+	typeStart: number;
+	/** Offset just past the `*` that makes it a pointer. */
+	starEnd: number;
+	/** Offset of the declared name. */
+	nameStart: number;
+}
+
+/**
+ * The `char *name` spelling that the literal initialises.
+ *
+ * The diagnostic points at the literal, not at the declaration, so the
+ * declaration is found by walking back over the initialiser. Requiring nothing
+ * but whitespace and `=` between the name and the literal keeps an unrelated
+ * earlier `char *name` from being rewritten.
+ */
+function charPointerBefore(text: string, literal: number, name: string): CharPointerSpot | null {
+	const pattern = new RegExp(`\\bchar\\s*\\*\\s*${escapePattern(name)}\\b`, 'g');
+	let found: RegExpExecArray | null = null;
+	let match: RegExpExecArray | null;
+	while ((match = pattern.exec(text))) {
+		if (match.index >= literal) break;
+		const after = text.slice(match.index + match[0].length, literal);
+		if (!/^\s*=\s*$/.test(after)) continue;
+		found = match;
 	}
-	return actions;
+	if (!found) return null;
+	const star = found.index + found[0].indexOf('*');
+	return {
+		typeStart: found.index,
+		starEnd: star + 1,
+		nameStart: found.index + found[0].length - name.length,
+	};
+}
+
+function escapePattern(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**

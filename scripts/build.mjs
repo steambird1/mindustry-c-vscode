@@ -61,6 +61,28 @@ function jsOptions(entry, outfile, extra = {}) {
 const compiler = await esbuild.build(compilerOptions);
 if (compiler.errors.length) process.exit(1);
 
+/*
+ * Ship the compiler's headers.
+ *
+ * `#include <string.h>` and friends are resolved against a directory, and an
+ * installed extension has no compiler checkout to point at. Copying `include/`
+ * into `out/include` gives the extension host somewhere to default to, and
+ * because it is done here it always matches the compiler that was bundled.
+ */
+const headerSource = path.join(compilerDir, 'include');
+const headerTarget = path.join(root, 'out', 'include');
+if (fs.existsSync(headerSource)) {
+	fs.rmSync(headerTarget, { recursive: true, force: true });
+	fs.mkdirSync(headerTarget, { recursive: true });
+	let copied = 0;
+	for (const name of fs.readdirSync(headerSource)) {
+		if (!name.endsWith('.h')) continue;
+		fs.copyFileSync(path.join(headerSource, name), path.join(headerTarget, name));
+		copied++;
+	}
+	if (!watch) console.log(`copied ${copied} header(s) -> out/include`);
+}
+
 const bundles = [
 	makeBundle('server', 'server/server.ts', 'out/server/server.js', {
 		external: SERVER_EXTERNALS,

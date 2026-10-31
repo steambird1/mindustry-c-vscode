@@ -38,7 +38,7 @@ export class ConfigurationService implements vscode.Disposable {
 	) {
 		this.manager = new ConfigurationManager(fileSystem, this.globalPath, this.workspacePath);
 		this.result = this.manager.load();
-		this.current = this.result.effective;
+		this.current = this.withBuiltins(this.result.effective);
 		this.report(this.result);
 		this.watch();
 	}
@@ -139,7 +139,7 @@ export class ConfigurationService implements vscode.Disposable {
 	/** Re-read both files and tell anyone listening. */
 	reload(): EffectiveConfig {
 		this.result = this.manager.load();
-		this.current = this.result.effective;
+		this.current = this.withBuiltins(this.result.effective);
 		this.report(this.result);
 		this.emitter.fire(this.current);
 		return this.current;
@@ -175,6 +175,20 @@ export class ConfigurationService implements vscode.Disposable {
 	/* ---------------------------------------------------------------- *
 	 * Internals
 	 * ---------------------------------------------------------------- */
+
+	/**
+	 * Point the compiler at the headers that ship with the extension.
+	 *
+	 * `scripts/build.mjs` copies the compiler's `include/` into `out/include`,
+	 * which is where `#include <string.h>` and friends are found when the
+	 * project has no copy of its own. User paths stay in front, so a project
+	 * header of the same name still wins.
+	 */
+	private withBuiltins(effective: EffectiveConfig): EffectiveConfig {
+		const dir = path.join(this.context.extensionPath, 'out', 'include');
+		if (!nodeFileSystem.exists(dir)) return effective;
+		return { ...effective, builtinIncludePaths: [dir] };
+	}
 
 	private workspaceFolder(): vscode.WorkspaceFolder | null {
 		return (vscode.workspace.workspaceFolders ?? [])[0] ?? null;

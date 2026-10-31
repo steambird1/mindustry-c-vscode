@@ -17,6 +17,11 @@ Logic (`mlog`).
   preview and can be copied to the clipboard; nothing is ever written to disk.
 - **Syntax highlighting generated from the compiler's own token tables**, so it
   follows the dialect rather than generic C.
+- **C characters and Mindustry strings kept apart**: `string_t` is a real type
+  in highlighting and completion, `char`/`const char*` render the way the
+  compiler sees them, and `char *p = "hi"` offers a quick fix (read-only view,
+  `string_t`, or a `char[]` copy). The compiler's headers ship with the
+  extension, so `#include <string.h>` resolves out of the box.
 
 ## Hello, World
 
@@ -96,6 +101,12 @@ Both are validated against `schemas/mlgc.schema.json`. Editing either changes
 the raw file for that scope; *Configure Target and Memory* is the guided way to
 do it. Settings that govern the extension itself — debounce window, large-file
 warning, preview behaviour — are ordinary VS Code settings under **Mindustry-C**.
+
+`#include` searches the including file's directory, then the active
+configuration's `includePaths`, then the headers that ship with the extension
+(`<extension>/out/include`). `#include <string.h>` and `#include "merui.h"`
+therefore work without pointing at a compiler checkout; a project header of the
+same name still wins.
 
 ## Development
 

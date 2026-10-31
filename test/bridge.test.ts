@@ -9,10 +9,15 @@
  * without them.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
+	analyze,
 	capabilities,
+	compile,
 	dirname,
 	isWindowsPath,
 	joinPath,
@@ -87,5 +92,122 @@ describe('paths', () => {
 		// A path the host gave in full is used as it stands.
 		assert.equal(joinPath('/project', '/elsewhere/header.h'), '/elsewhere/header.h');
 		assert.equal(joinPath('/project', 'D:\\elsewhere\\header.h'), 'D:\\elsewhere\\header.h');
+	});
+});
+
+/*
+ * The compiler separated `char` from its native string type: `char` is a
+ * one-cell character/number again, `string_t` is the Mindustry string, and a
+ * mutable `char*` may not point at a literal. These run the real compiler, so
+ * they also prove the adapter keeps the lexer's constructor state.
+ */
+const TARGET = { targetVersion: 154.3, memoryBlocks: [], includePaths: [] as string[] };
+const MEMORY = [{ name: 'cell1', size: 64 }];
+
+describe('string types', () => {
+	it('compiles char as a number and string_t as the native string', async () => {
+		const result = await compile({
+			source:
+				'int main(void) { string_t s = "hi"; char c = \'A\'; char a[] = "hi"; ' +
+				'return c + (int)s[0] + a[0]; }',
+			target: { ...TARGET, memoryBlocks: MEMORY },
+		});
+		assert.equal(result.success, true, result.errors.map(error => error.message).join('\n'));
+	});
+
+	it('refuses a mutable char* initialised from a literal', async () => {
+		const result = await analyze({
+			source: 'int main(void) { char *p = "hi"; return 0; }',
+			target: TARGET,
+		});
+		assert.equal(result.success, false, 'the literal must not be writable through char*');
+		assert.match(
+			result.errors.map(error => error.message).join('\n'),
+			/Cannot initialize 'char\*' with a string literal/,
+			'the message the quick fix is built on changed'
+		);
+	});
+
+	it('accepts the legacy char spelling only behind its pragma', async () => {
+		const legacy = await analyze({
+			source: '#pragma legacy_char_string\nint main(void) { char s = "hi"; return s[0]; }',
+			target: TARGET,
+		});
+		assert.equal(legacy.success, true, legacy.errors.map(error => error.message).join('\n'));
+
+		const plain = await analyze({
+			source: 'int main(void) { char s = "hi"; return s[0]; }',
+			target: TARGET,
+		});
+		assert.equal(plain.success, false, 'without the pragma, char is numeric');
+	});
+
+	/*
+	 * The lexer gets `__MINDC_TARGET_VERSION__` from the Compiler constructor.
+	 * The adapter used to replace that lexer with a fresh one, which dropped the
+	 * macro and made every `#if` over the target take the `#else` branch.
+	 */
+	it('evaluates #if against the configured target version', async () => {
+		const result = await compile({
+			source:
+				'int main(void) {\n#if __MINDC_TARGET_VERSION__ >= 154\n\treturn 1;\n' +
+				'#else\n\treturn 2;\n#endif\n}',
+			target: { ...TARGET, memoryBlocks: MEMORY },
+		});
+		assert.equal(result.success, true, result.errors.map(error => error.message).join('\n'));
+		assert.match(result.code, /set __return 1/);
+		assert.doesNotMatch(result.code, /set __return 2/);
+	});
+
+	it('applies the legacy spelling to included headers too', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindc-legacy-'));
+		fs.writeFileSync(path.join(dir, 'legacy.h'), 'char shared = "hi";\n');
+		try {
+			const result = await analyze({
+				source: '#pragma legacy_char_string\n#include "legacy.h"\nint main(void) { return shared[0]; }',
+				target: { ...TARGET, includePaths: [dir] },
+				filePath: path.join(dir, 'main.mlgc'),
+				readFile: target => {
+					try {
+						return fs.readFileSync(target, 'utf8');
+					} catch {
+						return null;
+					}
+				},
+			});
+			assert.equal(result.success, true, result.errors.map(error => error.message).join('\n'));
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	/*
+	 * `include/string.h` is where `string_view` and `sv_*` live. The build
+	 * copies the compiler's headers into `out/include`, so `#include <string.h>`
+	 * has somewhere to resolve even without a compiler checkout.
+	 */
+	it('ships the compiler headers, so <string.h> resolves', async () => {
+		const includeDir = path.join(__dirname, '..', '..', 'out', 'include');
+		assert.ok(fs.existsSync(path.join(includeDir, 'string.h')), 'out/include/string.h is missing');
+
+		const result = await analyze({
+			source:
+				'#include <string.h>\nint main(void) { string_t s = "hi"; ' +
+				'string_view v = sv_of_string(s); return sv_len(v); }',
+			target: { ...TARGET, includePaths: [includeDir] },
+			filePath: path.join(includeDir, '..', 'main.mlgc'),
+			readFile: target => {
+				try {
+					return fs.readFileSync(target, 'utf8');
+				} catch {
+					return null;
+				}
+			},
+		});
+		assert.equal(result.success, true, result.errors.map(error => error.message).join('\n'));
+		assert.ok(
+			result.includes.some(file => file.endsWith('string.h')),
+			'<string.h> did not come from the bundled headers'
+		);
 	});
 });

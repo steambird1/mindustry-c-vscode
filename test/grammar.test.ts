@@ -90,4 +90,17 @@ describe('the generated grammars', () => {
 		assert.equal(typeof blockComment.end, 'string', 'the block comment rule has no end');
 		assert.equal(blockComment.match, undefined, 'a `match` here would win and scope only `/*`');
 	});
+
+	it('mlgc colours the compiler`s types, keyword or not', () => {
+		const grammar = readGrammar('mlgc.tmLanguage.json');
+		const types = (repositoryOf(grammar).types as { patterns?: Rule[] }).patterns ?? [];
+		const rule = String(types[0]?.match ?? '');
+
+		for (const type of ['int', 'char', 'struct', 'string_t', 'device', 'content_t', 'item_t']) {
+			assert.ok(new RegExp(`\\b${type}\\b`).test(rule), `${type} is not coloured as a type`);
+		}
+		// `Object.keys` over the spelling array once slipped in here and made the
+		// rule match the indices 0-12 instead of the type keywords.
+		assert.doesNotMatch(rule, /\d/, 'the type rule matches a digit');
+	});
 });

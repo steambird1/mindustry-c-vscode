@@ -309,6 +309,33 @@ int main(void) { return 0; }
 		const shown = hover(byname, positionIn(BYNAME, BYNAME.indexOf('named')));
 		assert.match(shown?.contents ?? '', /int \*byname named/);
 	});
+
+	it('distinguishes string_t, char pointers and char', async () => {
+		const STRINGS = `string_t native = "hi";
+const char *view = "hi";
+char letter = 'A';
+char buffer[] = "hi";
+int main(void) { return 0; }
+`;
+		const response = await analyse(request(STRINGS), host);
+		assert.deepEqual(
+			response.diagnostics.map(diagnostic => diagnostic.message),
+			[],
+			'the string fixture must analyse cleanly'
+		);
+		assert.ok(response.index, 'no index for the string fixture');
+		const strings: IndexedDocument = { uri: URI, index: response.index, text: STRINGS, mainPath: PATH };
+		const typeOf = (name: string) =>
+			strings.index.symbols.find(symbol => symbol.name === name && symbol.scope === 'file')?.type;
+
+		assert.equal(typeOf('native'), 'string_t');
+		assert.equal(typeOf('view'), 'const char *');
+		assert.equal(typeOf('letter'), 'char');
+		assert.equal(typeOf('buffer'), 'char[3]', 'the array carries the literal and its NUL');
+
+		const shown = hover(strings, positionIn(STRINGS, STRINGS.indexOf('native')));
+		assert.match(shown?.contents ?? '', /string_t native/);
+	});
 });
 
 describe('find references', () => {
@@ -391,6 +418,10 @@ describe('rename', () => {
 	it('refuses to rename a name the compiler owns', () => {
 		// Renaming `print` would break every call site in every header.
 		assert.equal(isReservedName('print'), true);
+		// Types are generated from the parser's own list, including the ones
+		// that are not keywords.
+		assert.equal(isReservedName('string_t'), true, 'string_t is a compiler type');
+		assert.equal(isReservedName('item_t'), true, 'item_t is a compiler type');
 		assert.equal(isReservedName('total'), false);
 	});
 
@@ -460,6 +491,9 @@ describe('completion', () => {
 		const labels = new Set(complete(document, positionIn(SOURCE, offset)).map(item => item.label));
 		assert.ok(labels.has('if'), 'no keywords offered');
 		assert.ok(labels.has('while'), 'no keywords offered');
+		// Types that are not keywords are generated from the parser's list.
+		assert.ok(labels.has('string_t'), 'string_t is not offered');
+		assert.ok(labels.has('item_t'), 'item_t is not offered');
 	});
 
 	it('offers this function`s locals but not another`s', async () => {
@@ -609,6 +643,34 @@ int main(void) {
 
 	it('ignores diagnostics it does not understand', () => {
 		assert.deepEqual(quickFixes(document, [{ message: 'Expected variable name in declaration' }]), []);
+	});
+
+	it('turns a mutable char* literal into a view, a string_t or a copy', async () => {
+		const MUTABLE = `int main(void) {
+	char *p = "hi";
+	return 0;
+}
+`;
+		const response = await analyse(request(MUTABLE), host);
+		const diagnostic = response.diagnostics.find(entry =>
+			entry.message.includes('with a string literal')
+		);
+		assert.ok(diagnostic, 'the mutable char* was not refused');
+		assert.ok(response.index, 'no index for the char* fixture');
+
+		const mutable: IndexedDocument = { uri: URI, index: response.index, text: MUTABLE, mainPath: PATH };
+		// The client passes the squiggle's range with the diagnostic; it starts at
+		// the literal, not at the declaration.
+		const range = {
+			start: { line: (diagnostic.line ?? 1) - 1, character: (diagnostic.column ?? 1) - 1 },
+		};
+		const fixes = quickFixes(mutable, [{ message: diagnostic.message, range }]);
+		assert.equal(fixes.length, 3, 'expected const, string_t and char[]');
+
+		const [readOnly, native, copy] = fixes.map(fix => applyEdits(MUTABLE, fix.edit.changes[URI]));
+		assert.match(readOnly, /const char \*p = "hi";/);
+		assert.match(native, /string_t p = "hi";/);
+		assert.match(copy, /char p\[\] = "hi";/);
 	});
 });
 

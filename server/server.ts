@@ -269,7 +269,12 @@ function scheduleAnalysis(document: TextDocument): void {
 }
 
 function resolveIncludePaths(documentPath: string | null): string[] {
-	return (effectiveConfig?.includePaths ?? []).map(entry => resolveRelative(entry, documentPath));
+	const configured = (effectiveConfig?.includePaths ?? []).map(entry =>
+		resolveRelative(entry, documentPath)
+	);
+	// Headers shipped with the extension come last: a project file of the same
+	// name (`string.h`, `math.h`) must win over the bundled copy.
+	return [...configured, ...(effectiveConfig?.builtinIncludePaths ?? [])];
 }
 
 /** Config paths may be absolute or relative to the file or the workspace root. */
