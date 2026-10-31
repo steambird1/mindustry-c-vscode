@@ -553,7 +553,11 @@ connection.onCodeAction(params => {
 	const document = documents.get(params.textDocument.uri);
 	const current = document ? { ...entry, text: document.getText() } : entry;
 	const diagnostics = params.context.diagnostics ?? [];
-	return quickFixes(current, diagnostics).map(fix => ({
+	return quickFixes(current, diagnostics, {
+		// `string_view` needs v150 and the string header; the server knows the
+		// target, the fix does not.
+		targetVersion: effectiveConfig?.targetVersion,
+	}).map(fix => ({
 		title: fix.title,
 		kind: CodeActionKind.QuickFix,
 		// Attach the diagnostic it was derived from, so the client groups it

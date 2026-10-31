@@ -249,9 +249,11 @@ to keep them apart:
   (which had already missed `string_t` and the `*_t` content types).
 - `char` is an ordinary one-cell number again. `char*` is a real block+offset
   pointer, and only `const char*` may point at a literal: `char *p = "hi"` is
-  refused, with a message naming the alternatives. The extension offers all
-  three as quick fixes — a `const char*` view, the one-cell `string_t`, or a
-  `char name[]` copy.
+  refused, with a message naming the alternatives. The extension offers a
+  `const char*` view, the one-cell `string_t`, or a `char name[]` copy; when
+  `<string.h>` is already included and the target is v150 or newer it also
+  offers a `string_view` built with `sv_of_string(...)` (a literal does not
+  convert to a view on its own).
 - A literal materialised for a `const char*` becomes a hidden `__strlit_N`
   declaration in `ast.globalDeclarations`. The index skips it for free: a
   declaration is only recorded when the source text at its location spells its

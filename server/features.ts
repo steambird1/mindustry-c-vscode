@@ -912,10 +912,12 @@ const MUTABLE_CHAR_LITERAL_NAME = /'char ([A-Za-z_]\w*)\[\] =/;
  */
 export function quickFixes(
 	document: IndexedDocument,
-	diagnostics: readonly ActionDiagnostic[]
+	diagnostics: readonly ActionDiagnostic[],
+	options: { targetVersion?: number } = {}
 ): QuickFix[] {
 	const actions: QuickFix[] = [];
 	const insertion = positionIn(document.text, declarationInsertionOffset(document.text));
+	const targetVersion = options.targetVersion ?? 154.3;
 
 	for (const diagnostic of diagnostics) {
 		const match = UNDECLARED_IDENTIFIER.exec(diagnostic.message);
@@ -939,13 +941,17 @@ export function quickFixes(
 			continue;
 		}
 
-		actions.push(...mutableCharFixes(document, diagnostic));
+		actions.push(...mutableCharFixes(document, diagnostic, targetVersion));
 	}
 	return actions;
 }
 
-/** The three ways to keep `"hi"` in a `char*` declaration. */
-function mutableCharFixes(document: IndexedDocument, diagnostic: ActionDiagnostic): QuickFix[] {
+/** The ways to keep `"hi"` in a `char*` declaration. */
+function mutableCharFixes(
+	document: IndexedDocument,
+	diagnostic: ActionDiagnostic,
+	targetVersion: number
+): QuickFix[] {
 	if (!MUTABLE_CHAR_LITERAL.test(diagnostic.message)) return [];
 	const name = MUTABLE_CHAR_LITERAL_NAME.exec(diagnostic.message)?.[1];
 	const start = diagnostic.range?.start;
@@ -960,8 +966,11 @@ function mutableCharFixes(document: IndexedDocument, diagnostic: ActionDiagnosti
 	const nameEnd = run(spot.nameStart + name.length);
 	const spaced = (text: string) =>
 		/\s/.test(document.text[spot.starEnd] ?? '') ? text : `${text} `;
+	const replaceType = (text: string): QuickFix['edit'] => ({
+		changes: { [document.uri]: [{ range: type, newText: spaced(text) }] },
+	});
 
-	return [
+	const fixes: QuickFix[] = [
 		{
 			title: `Make '${name}' a read-only view: const char *${name}`,
 			diagnostic: diagnostic.message,
@@ -970,25 +979,64 @@ function mutableCharFixes(document: IndexedDocument, diagnostic: ActionDiagnosti
 		{
 			title: `Use the native string type: string_t ${name}`,
 			diagnostic: diagnostic.message,
-			edit: {
-				changes: {
-					[document.uri]: [{ range: type, newText: spaced('string_t') }],
-				},
-			},
+			edit: replaceType('string_t'),
 		},
-		{
-			title: `Copy the text into a mutable array: char ${name}[]`,
+	];
+
+	/*
+	 * `string_view` is not one of the compiler's alternatives, because a literal
+	 * does not convert to it: the view has to be built with `sv_of_string`.
+	 * That needs the header and a v150 target, so it is offered only when both
+	 * are already true -- the fix must not add an include behind the user's back.
+	 */
+	const literalEnd = stringLiteralEnd(document.text, literal);
+	if (targetVersion >= 150 && hasStringHeader(document.text) && literalEnd > literal) {
+		fixes.push({
+			title: `View the text as a string_view: sv_of_string(...)`,
 			diagnostic: diagnostic.message,
 			edit: {
 				changes: {
 					[document.uri]: [
-						{ range: type, newText: spaced('char') },
-						{ range: { start: nameEnd, end: nameEnd }, newText: '[]' },
+						{ range: type, newText: spaced('string_view') },
+						{ range: { start: run(literal), end: run(literal) }, newText: 'sv_of_string(' },
+						{ range: { start: run(literalEnd), end: run(literalEnd) }, newText: ')' },
 					],
 				},
 			},
+		});
+	}
+
+	fixes.push({
+		title: `Copy the text into a mutable array: char ${name}[]`,
+		diagnostic: diagnostic.message,
+		edit: {
+			changes: {
+				[document.uri]: [
+					{ range: type, newText: spaced('char') },
+					{ range: { start: nameEnd, end: nameEnd }, newText: '[]' },
+				],
+			},
 		},
-	];
+	});
+
+	return fixes;
+}
+
+/** The end of a double-quoted literal, past the closing quote; -1 if unclosed. */
+function stringLiteralEnd(text: string, start: number): number {
+	if (text[start] !== '"') return -1;
+	for (let index = start + 1; index < text.length; index++) {
+		if (text[index] === '\\') {
+			index++;
+			continue;
+		}
+		if (text[index] === '"') return index + 1;
+	}
+	return -1;
+}
+
+function hasStringHeader(text: string): boolean {
+	return /^[ \t]*#[ \t]*include[ \t]*[<"]string\.h[>"]/m.test(text);
 }
 
 interface CharPointerSpot {

@@ -672,6 +672,40 @@ int main(void) {
 		assert.match(native, /string_t p = "hi";/);
 		assert.match(copy, /char p\[\] = "hi";/);
 	});
+
+	it('offers a string_view when the header is there and the target supports it', () => {
+		const VIEW = `#include <string.h>
+int main(void) {
+	char *p = "hi";
+	return 0;
+}
+`;
+		const message =
+			`Cannot initialize 'char*' with a string literal: the characters are read-only. ` +
+			`Use 'const char*' for a view, or 'char p[] = "..."' for a mutable copy.`;
+		const literal = positionIn(VIEW, VIEW.indexOf('"hi"'));
+		const view = { ...document, text: VIEW };
+
+		// A literal does not convert to string_view; it needs sv_of_string().
+		const current = quickFixes(view, [{ message, range: { start: literal } }], {
+			targetVersion: 154.3,
+		});
+		assert.equal(current.length, 4, 'the string_view fix is missing');
+		const wrapped = current.find(fix => /string_view/.test(fix.title));
+		assert.ok(wrapped, 'no string_view fix');
+		assert.match(
+			applyEdits(VIEW, wrapped.edit.changes[URI]),
+			/string_view p = sv_of_string\("hi"\);/,
+			'the view was not built from the literal'
+		);
+
+		// Before v150 the header has no string_view API, so offering it would
+		// only trade one error for another.
+		const older = quickFixes(view, [{ message, range: { start: literal } }], {
+			targetVersion: 149,
+		});
+		assert.equal(older.length, 3, 'string_view offered below v150');
+	});
 });
 
 describe('semantic tokens', () => {

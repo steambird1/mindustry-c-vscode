@@ -20,8 +20,9 @@ Logic (`mlog`).
 - **C characters and Mindustry strings kept apart**: `string_t` is a real type
   in highlighting and completion, `char`/`const char*` render the way the
   compiler sees them, and `char *p = "hi"` offers a quick fix (read-only view,
-  `string_t`, or a `char[]` copy). The compiler's headers ship with the
-  extension, so `#include <string.h>` resolves out of the box.
+  `string_t`, a `char[]` copy, or `string_view` via `sv_of_string`). The
+  compiler's headers ship with the extension, so `#include <string.h>` resolves
+  out of the box.
 
 ## Hello, World
 
