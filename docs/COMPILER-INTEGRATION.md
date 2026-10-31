@@ -338,6 +338,22 @@ dead thread still produces exactly one message. `test/analysis.test.ts` pins
 both spellings: if either stops being written, the diagnostic that stands in for
 a whole run's worth of findings disappears and the file looks clean again.
 
+### Stale results
+
+A result is published only if it is still the newest request for its document.
+An edit invalidates the in-flight request immediately, even though the request
+that will carry the new text is still inside the debounce window; without that,
+a slow run started before the edit could finish while the timer was waiting and
+be shown as current. The same rule applies when a request is lost to a dead
+thread: only requests still considered current are failed, so a superseded one
+does not add a "stopped unexpectedly" finding to a file the user has already
+moved past.
+
+The analyser cannot be interrupted. The compiler has no cancellation hook and
+the worker handles requests one at a time, so a new request waits behind a
+running one. What this guarantees is that the result eventually shown describes
+the newest text, not that the wait is short.
+
 ## Build-time extraction
 
 `npm run gen` reads the compiler directly (no bundling needed) and writes:

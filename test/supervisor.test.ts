@@ -109,6 +109,44 @@ describe('a thread that dies with a request in flight', () => {
 	});
 });
 
+describe('a result that a newer edit has superseded', () => {
+	it('is not published as if it described the current text', async () => {
+		const seen: AnalysisResponse[] = [];
+		const host = new AnalysisWorkerHost({
+			// Answers after 300 ms, so the edit below lands while it is running.
+			workerPath: fixture(
+				'fixture-delayed-worker.js',
+				`const { parentPort } = require('node:worker_threads');
+parentPort.on('message', message => {
+	setTimeout(() => {
+		parentPort.postMessage({ id: message.id, uri: message.uri, diagnostics: [], index: null, fatal: JSON.stringify({ version: message.version }) });
+	}, 300);
+});
+`
+			),
+			debounceMs: 0,
+			onResult: response => seen.push(response),
+		});
+
+		try {
+			host.analyse(request);
+			// Let the request reach the worker; it answers after 300 ms.
+			await settle(50);
+			// `analyse` is not called again until the server's debounce fires, so
+			// `invalidate` is the only signal that this result is now outdated.
+			host.invalidate(URI);
+			await settle(400);
+			assert.equal(seen.length, 0, 'a result for text that no longer exists was published');
+
+			host.analyse({ ...request, version: 4 });
+			await waitFor(() => seen.length > 0, 'the fresh result');
+			assert.match(seen[0].fatal!, /"version":4/);
+		} finally {
+			await host.dispose();
+		}
+	});
+});
+
 describe('a thread that is told about buffers that changed', () => {
 	it('uses the new text for the next request, not the map it started with', async () => {
 		const seen: AnalysisResponse[] = [];

@@ -69,6 +69,18 @@ export class AnalysisWorkerHost {
 	}
 
 	/**
+	 * An edit supersedes whatever is in flight for this document, even though the
+	 * request that carries the new text is still waiting in the debounce timer.
+	 * Without this, a slow run started before the edit can finish while the timer
+	 * is still waiting and be published as if it described the current text.
+	 */
+	invalidate(uri: string): void {
+		// No request has this id: `receive` and `failInFlight` treat everything
+		// in flight as superseded until the debounced `analyse` assigns a new one.
+		this.latest.set(uri, -1);
+	}
+
+	/**
 	 * Queue an analysis, returning the id it will be answered with. Requests for
 	 * the same document inside the debounce window replace one another, so typing
 	 * does not queue a hundred runs.

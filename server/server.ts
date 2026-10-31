@@ -244,6 +244,9 @@ function scheduleDependents(changed: TextDocument): void {
  */
 function scheduleAnalysis(document: TextDocument): void {
 	if (document.languageId !== 'mlgc' || !settings.diagnostics.enable) return;
+	// The timer defers the next request, but the edit already supersedes the one
+	// that may be running: its result must not be published as current.
+	worker?.invalidate(document.uri);
 	const existing = pendingTimers.get(document.uri);
 	if (existing) clearTimeout(existing);
 
