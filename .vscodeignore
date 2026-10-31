@@ -27,6 +27,8 @@ patches/**
 # nothing reads it at run time; out/probe.mjs is the AST question tool.
 out/compiler/**
 out/probe.mjs
+# Backups written by scripts/sync-compiler.mjs; never part of a build.
+out/compiler-wip/**
 
 # --- project files ---
 .vscode/**

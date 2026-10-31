@@ -35,6 +35,39 @@ compared to a compiler with them reverted. `npm run patches:verify` proves that
 on each run rather than trusting a review of the diff, and
 `npm run test:golden` pins the fingerprints.
 
+### Updating the compiler
+
+`compiler/` is a clone of the compiler repository, and the patches are
+working-tree changes, so a compiler update means: fetch, reset, re-apply.
+
+```sh
+node scripts/sync-compiler.mjs --dry-run   # fetch, show what is new, change nothing
+node scripts/sync-compiler.mjs             # sync + apply every patches/*.patch
+node scripts/sync-compiler.mjs --check     # ... and npm run check
+node scripts/sync-compiler.mjs --package   # ... check, bump patch, build the vsix
+```
+
+The upstream defaults to `../mindustry-c` — the checkout the compiler is
+developed in, which is usually ahead of this clone's `origin`, so it is fetched
+by path rather than from the remote. Override it with `--upstream <path>` or
+`MINDC_UPSTREAM`, and the branch with `--branch`.
+
+The script stops rather than guessing when something needs a judgement:
+
+| Failure | What to do |
+| --- | --- |
+| a patch no longer applies | the compiler moved the code it touches; re-port the patch and run the script again |
+| `gen:check` | the tables changed: `npm run gen`, review the diff, commit it |
+| `test` | the AST contract moved: fix `src/compiler/symbols.ts` or `analysis.ts` |
+| `test:golden` | the output changed: review the listed files, then `npm run test:golden:update` |
+| `patches:verify` | the patches are no longer neutral: re-port them |
+
+Before the reset it saves whatever the checkout had uncommitted to
+`out/compiler-wip-<timestamp>.diff`. Normally that is just the patches, which
+are reproducible; it matters only if someone hand-edited the compiler there.
+
+`--package --bump none` rebuilds at the current version instead of bumping.
+
 ### 0001 in detail
 
 `compile()` was one long method: tokenise → read pragmas → build the phase

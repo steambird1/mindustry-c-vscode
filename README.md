@@ -98,6 +98,7 @@ warning, preview behaviour — are ordinary VS Code settings under **Mindustry-C
 npm run check      # typecheck, grammar freshness, tests, golden output, patch neutrality
 npm run build      # the five bundles that make up the extension
 npm run gen        # regenerate the TextMate grammar from the compiler's tables
+npm run sync:compiler   # pull the compiler, re-apply the patches (see docs)
 ```
 
 How this talks to the compiler, what was patched to make that possible, and the

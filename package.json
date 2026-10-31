@@ -215,6 +215,7 @@
     "watch": "node scripts/build.mjs --watch",
     "gen": "node scripts/gen-grammar.mjs",
     "gen:check": "node scripts/gen-grammar.mjs --check",
+    "sync:compiler": "node scripts/sync-compiler.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "patches:verify": "node scripts/verify-patch-neutrality.mjs",
     "pretest": "node scripts/build.mjs && node scripts/build-tests.mjs",
