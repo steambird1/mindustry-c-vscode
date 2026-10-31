@@ -280,39 +280,39 @@ describe('go to definition', () => {
 
 describe('find references', () => {
 	it('lists the declaration and every use', () => {
-		const found = references([document], document, positionIn(SOURCE, at('total(p.x')));
+		const found = references([document], document, positionIn(SOURCE, at('total(p.x')), toUri);
 		assert.equal(found.length, 2, 'expected the declaration plus the one call');
 		assert.ok(found.every(location => location.uri === URI));
 	});
 
 	it('lists every use of a struct member', () => {
-		const found = references([document], document, positionIn(SOURCE, memberAt('p.x = 1')));
+		const found = references([document], document, positionIn(SOURCE, memberAt('p.x = 1')), toUri);
 		// The declaration in the struct plus the two `p.x` uses.
 		assert.equal(found.length, 3);
 	});
 
 	it('finds the same set from a member declaration as from a use', () => {
-		const fromUse = references([document], document, positionIn(SOURCE, memberAt('p.x = 1'))).map(
+		const fromUse = references([document], document, positionIn(SOURCE, memberAt('p.x = 1')), toUri).map(
 			location => JSON.stringify(location.range)
 		);
-		const fromDeclaration = references([document], document, positionIn(SOURCE, at('int x') + 4)).map(
+		const fromDeclaration = references([document], document, positionIn(SOURCE, at('int x') + 4), toUri).map(
 			location => JSON.stringify(location.range)
 		);
 		assert.deepEqual(fromDeclaration, fromUse);
 	});
 
 	it('finds the same set from the declaration as from a use', () => {
-		const fromUse = references([document], document, positionIn(SOURCE, at('total(p.x'))).map(location =>
+		const fromUse = references([document], document, positionIn(SOURCE, at('total(p.x')), toUri).map(location =>
 			JSON.stringify(location.range)
 		);
-		const fromDeclaration = references([document], document, positionIn(SOURCE, at('total'))).map(
+		const fromDeclaration = references([document], document, positionIn(SOURCE, at('total')), toUri).map(
 			location => JSON.stringify(location.range)
 		);
 		assert.deepEqual(fromDeclaration, fromUse);
 	});
 
 	it('finds every use of a local, not just the first', () => {
-		const found = references([document], document, positionIn(SOURCE, at('p.x = 1')));
+		const found = references([document], document, positionIn(SOURCE, at('p.x = 1')), toUri);
 		// The declaration, plus the four `p.` accesses: two assignments and the
 		// two arguments of the call.
 		assert.equal(found.length, 5);
@@ -321,7 +321,7 @@ describe('find references', () => {
 
 describe('rename', () => {
 	it('rewrites the declaration and every use, and nothing else', () => {
-		const edit = rename([document], document, positionIn(SOURCE, at('total(p.x')), 'sum');
+		const edit = rename([document], document, positionIn(SOURCE, at('total(p.x')), 'sum', toUri);
 		assert.ok(edit, 'rename produced no edit');
 		const edits = edit.changes[URI];
 		assert.ok(edits);
@@ -332,12 +332,12 @@ describe('rename', () => {
 	it('does not touch the return type when renaming a function', () => {
 		// The compiler points a declaration at its own return type, so a rename
 		// that trusted that position would rewrite `int` into the new name.
-		const edit = rename([document], document, positionIn(SOURCE, at('total')), 'sum');
+		const edit = rename([document], document, positionIn(SOURCE, at('total')), 'sum', toUri);
 		assert.equal(applyEdits(SOURCE, edit!.changes[URI]), SOURCE.replaceAll('total', 'sum'));
 	});
 
 	it('renames a struct member through a dot access', () => {
-		const edit = rename([document], document, positionIn(SOURCE, memberAt('p.x = 1')), 'horizontal');
+		const edit = rename([document], document, positionIn(SOURCE, memberAt('p.x = 1')), 'horizontal', toUri);
 		assert.ok(edit, 'rename produced no edit for a member');
 		const edited = applyEdits(SOURCE, edit.changes[URI]);
 		// The declaration and both uses, and nothing else. `x` also appears inside
@@ -350,7 +350,7 @@ describe('rename', () => {
 	});
 
 	it('renames a struct member from its own declaration', () => {
-		const edit = rename([document], document, positionIn(SOURCE, at('int x') + 4), 'horizontal');
+		const edit = rename([document], document, positionIn(SOURCE, at('int x') + 4), 'horizontal', toUri);
 		assert.ok(edit, 'rename produced no edit from the member declaration');
 		assert.equal(applyEdits(SOURCE, edit.changes[URI]).split('horizontal').length - 1, 3);
 	});
@@ -362,7 +362,7 @@ describe('rename', () => {
 	});
 
 	it('refuses to rename a name it could not resolve', () => {
-		assert.equal(rename([document], document, positionIn(SOURCE, at('return s')), 'x'), null);
+		assert.equal(rename([document], document, positionIn(SOURCE, at('return s')), 'x', toUri), null);
 	});
 });
 

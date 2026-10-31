@@ -41,6 +41,7 @@ const LITERAL = 'file:///c:/project/main.mlgc';
  */
 const INCLUDE_HEADER = 'file:///c%3A/project/lib.h';
 const INCLUDE_MAIN = 'file:///c%3A/project/include-main.mlgc';
+const INCLUDE_OTHER = 'file:///c%3A/project/other-main.mlgc';
 
 const BROKEN = 'int main(void) {\n    return thisDoesNotExist;\n}\n';
 
@@ -64,7 +65,11 @@ function connect(target: string) {
 		stdio: ['pipe', 'pipe', 'pipe'],
 	});
 
-	let buffer = '';
+	// Frames are counted in bytes, and a completion `detail` can contain a
+	// multi-byte character (the `…` in `void* byname(…)`), so the buffer has to
+	// be bytes: comparing `Content-Length` against a JS string length waits for
+	// bytes that never arrive and swallows the next header into the body.
+	let buffer = Buffer.alloc(0);
 	let stderr = '';
 	let nextId = 1;
 	const waiting = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
@@ -107,19 +112,19 @@ function connect(target: string) {
 	};
 
 	child.stdout.on('data', chunk => {
-		buffer += String(chunk);
+		buffer = Buffer.concat([buffer, chunk]);
 		for (;;) {
 			const headerEnd = buffer.indexOf('\r\n\r\n');
 			if (headerEnd < 0) return;
-			const match = /Content-Length: (\d+)/i.exec(buffer.slice(0, headerEnd));
+			const match = /Content-Length: (\d+)/i.exec(buffer.subarray(0, headerEnd).toString('ascii'));
 			if (!match) {
-				buffer = buffer.slice(headerEnd + 4);
+				buffer = buffer.subarray(headerEnd + 4);
 				continue;
 			}
 			const length = Number(match[1]);
 			if (buffer.length < headerEnd + 4 + length) return;
-			const body = buffer.slice(headerEnd + 4, headerEnd + 4 + length);
-			buffer = buffer.slice(headerEnd + 4 + length);
+			const body = buffer.subarray(headerEnd + 4, headerEnd + 4 + length).toString('utf8');
+			buffer = buffer.subarray(headerEnd + 4 + length);
 			receive(JSON.parse(body) as RpcMessage);
 		}
 	});
@@ -263,16 +268,78 @@ describe('the language server, over the wire', () => {
 	it('resolves #include from a header that exists only in the editor', async () => {
 		// The header is opened before the file that includes it, and there is no
 		// copy on disk, so the run cannot even open it without the buffer.
-		open(INCLUDE_HEADER, 'c', 'int fromBuffer(void);\n');
-		open(INCLUDE_MAIN, 'mlgc', '#include "lib.h"\nint main(void) {\n    return 0;\n}\n');
+		open(INCLUDE_HEADER, 'c', 'int fromBuffer(int value);\n');
+		open(INCLUDE_MAIN, 'mlgc', '#include "lib.h"\nint main(void) {\n    return fromBuffer(1);\n}\n');
 
 		const result = await client.waitForPublish(INCLUDE_MAIN, 20000);
 
 		assert.equal(result.count, 0, `expected a clean run, got: ${result.messages.join(' | ')}`);
 	});
 
+	it('answers completion while the index is one keystroke behind', async () => {
+		// Analysis is debounced; a completion request that arrives between a
+		// keystroke and the next run used to be answered from an index whose
+		// version no longer matched, which meant an empty list and nothing but
+		// VS Code's word suggestions on screen.
+		client.write({
+			method: 'textDocument/didChange',
+			params: {
+				textDocument: { uri: CANONICAL, version: 2 },
+				contentChanges: [{ text: BROKEN }],
+			},
+		});
+
+		const result = await client.request('textDocument/completion', {
+			textDocument: { uri: CANONICAL },
+			position: { line: 1, character: 11 },
+			context: { triggerKind: 1 },
+		});
+		const items = Array.isArray(result) ? result : result?.items ?? [];
+		const labels = items.map((item: { label: string }) => item.label);
+
+		assert.ok(labels.includes('main'), `no "main" in ${JSON.stringify(labels.slice(0, 12))}`);
+	});
+
+	it('attributes references, rename and the outline to the file they are in', async () => {
+		// A second open file that includes the same header: both translation
+		// units carry the header's declaration, so it must not be reported twice.
+		open(INCLUDE_OTHER, 'mlgc', '#include "lib.h"\nint main(void) { return 0; }\n');
+		await client.waitForPublish(INCLUDE_OTHER, 20000);
+
+		// Inside `fromBuffer` at the call site.
+		const position = { line: 2, character: 14 };
+
+		const found = await client.request('textDocument/references', {
+			textDocument: { uri: INCLUDE_MAIN },
+			position,
+			context: { includeDeclaration: true },
+		});
+		const locations = (found ?? []) as Array<{ uri: string; range: { start: { line: number; character: number } } }>;
+		const uris = new Set(locations.map(location => location.uri));
+		assert.ok(uris.has(INCLUDE_MAIN), 'the call site was not reported');
+		assert.ok(uris.has(INCLUDE_HEADER), 'the header declaration was reported against the wrong document');
+
+		const keys = locations.map(location => `${location.uri}:${location.range.start.line}:${location.range.start.character}`);
+		assert.equal(new Set(keys).size, keys.length, 'the same location was reported more than once');
+
+		const edit = await client.request('textDocument/rename', {
+			textDocument: { uri: INCLUDE_MAIN },
+			position,
+			newName: 'renamedBuffer',
+		});
+		assert.ok(edit?.changes?.[INCLUDE_MAIN], 'the call site was not renamed');
+		assert.ok(edit?.changes?.[INCLUDE_HEADER], 'the header declaration was not renamed');
+
+		const symbols = (await client.request('textDocument/documentSymbol', {
+			textDocument: { uri: INCLUDE_MAIN },
+		})) as Array<{ name: string }>;
+		const names = symbols.map(symbol => symbol.name);
+		assert.ok(names.includes('main'), 'the outline lost the function');
+		assert.ok(!names.includes('fromBuffer'), 'a header declaration leaked into the outline');
+	});
+
 	it('never publishes a finding under a uri that is not a document', () => {
-		const known = new Set([CANONICAL, LITERAL, INCLUDE_HEADER, INCLUDE_MAIN]);
+		const known = new Set([CANONICAL, LITERAL, INCLUDE_HEADER, INCLUDE_MAIN, INCLUDE_OTHER]);
 		const stray = client.published.filter(entry => entry.count > 0 && !known.has(entry.uri));
 		assert.deepEqual(stray, [], 'a finding was attributed to something the editor does not have');
 	});

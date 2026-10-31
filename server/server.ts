@@ -432,11 +432,14 @@ async function watchIncludes(includes: string[]): Promise<void> {
  * Language features
  * ------------------------------------------------------------------ */
 
-function indexed(uri: string): IndexedDocument | null {
+function indexed(uri: string, options: { allowStale?: boolean } = {}): IndexedDocument | null {
 	const entry = indexes.get(uri);
 	if (!entry) return null;
 	const document = documents.get(uri);
-	if (document && entry.index.version !== document.version) return null;
+	// Analysis is debounced, so while the user types the index is normally one
+	// keystroke behind. Hover and navigation must not act on stale positions,
+	// but completion is better served by the previous symbol list than by none.
+	if (!options.allowStale && document && entry.index.version !== document.version) return null;
 	return entry;
 }
 
@@ -456,7 +459,7 @@ connection.onDefinition(params => {
 
 connection.onReferences(params => {
 	const entry = indexed(params.textDocument.uri);
-	return entry ? references([...indexes.values()], entry, params.position) : null;
+	return entry ? references([...indexes.values()], entry, params.position, toUri) : null;
 });
 
 connection.onPrepareRename(params => {
@@ -476,24 +479,30 @@ connection.onPrepareRename(params => {
 
 connection.onRenameRequest((params): WorkspaceEdit | null => {
 	const entry = indexed(params.textDocument.uri);
-	return entry ? rename([...indexes.values()], entry, params.position, params.newName) : null;
+	return entry ? rename([...indexes.values()], entry, params.position, params.newName, toUri) : null;
 });
 
 connection.onCompletion(params => {
-	const entry = indexed(params.textDocument.uri);
-	const items = entry ? complete(entry, params.position).map(toLspCompletion) : [];
+	// The index may lag the buffer by one keystroke (analysis is debounced); a
+	// slightly stale symbol list is useful, an empty one is not. The text must
+	// not lag, though: the `.` / `@` prefix is read from it.
+	const entry = indexed(params.textDocument.uri, { allowStale: true });
+	if (!entry) return { isIncomplete: true, items: [] };
+
+	const document = documents.get(params.textDocument.uri);
+	const current = document ? { ...entry, text: document.getText() } : entry;
 	return {
 		// Incomplete: symbols change on every keystroke, and a stale cached list
 		// would be worse than recomputing.
 		isIncomplete: true,
-		items,
+		items: complete(current, params.position).map(toLspCompletion),
 	};
 });
 
 connection.onDocumentSymbol(params => {
 	const entry = indexed(params.textDocument.uri);
 	if (!entry) return [];
-	return outline(entry).map(symbol => ({
+	return outline(entry, fromUri(params.textDocument.uri)).map(symbol => ({
 		name: symbol.name,
 		detail: symbol.detail,
 		kind:
