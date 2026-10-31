@@ -430,7 +430,7 @@ export function buildDocumentIndex(input: IndexInput): DocumentIndex {
 	if (input.ast) {
 		const program = input.ast as AstNode;
 		collectTypeDefinitions(program, input.mainPath, texts, state);
-		walk(program, input.mainPath, texts, state, program.scope ?? null, false, new WeakSet());
+		walk(program, input.mainPath, texts, state, program.scope ?? null, false, null, new WeakSet());
 	}
 
 	state.references.sort((a, b) => a.offset - b.offset);
@@ -687,11 +687,12 @@ function walk(
 	state: WalkState,
 	scope: AstScope | null,
 	inFunction: boolean,
+	owner: string | null,
 	seen: WeakSet<object>
 ): void {
 	if (!node || typeof node !== 'object') return;
 	if (Array.isArray(node)) {
-		for (const child of node) walk(child, mainPath, texts, state, scope, inFunction, seen);
+		for (const child of node) walk(child, mainPath, texts, state, scope, inFunction, owner, seen);
 		return;
 	}
 	if (seen.has(node)) return;
@@ -703,9 +704,13 @@ function walk(
 	// Everything under a function is block scope, including its parameters, so
 	// the outline can tell a local from a declaration.
 	const childInFunction = inFunction || nodeType(ast) === 'FunctionDeclaration';
+	// And everything under it belongs to that function, which is what lets
+	// completion leave another function's locals out.
+	const functionName = nodeType(ast) === 'FunctionDeclaration' ? asName(ast.name) : null;
+	const childOwner = functionName ? sourceName(functionName) : owner;
 
 	if (location && typeof location.line === 'number' && !state.claimed.has(ast)) {
-		visit(ast, location.filename ?? mainPath, texts, state, childScope, inFunction);
+		visit(ast, location.filename ?? mainPath, texts, state, childScope, inFunction, owner);
 	}
 
 	for (const [key, value] of Object.entries(ast)) {
@@ -726,7 +731,7 @@ function walk(
 			continue;
 		}
 		if (value && typeof value === 'object') {
-			walk(value, mainPath, texts, state, childScope, childInFunction, seen);
+			walk(value, mainPath, texts, state, childScope, childInFunction, childOwner, seen);
 		}
 	}
 }
@@ -739,7 +744,8 @@ function visit(
 	texts: FileText,
 	state: WalkState,
 	scope: AstScope | null,
-	inFunction: boolean
+	inFunction: boolean,
+	owner: string | null
 ): void {
 	const location = node.location;
 	if (!location) return;
@@ -777,6 +783,7 @@ function visit(
 			path,
 			range: texts.range(path ?? '', offset, name.length),
 			declarationOffset: offset,
+			...(local === 'local' && owner ? { owner } : {}),
 		};
 		state.symbols.push(info);
 		state.references.push({
@@ -793,7 +800,10 @@ function visit(
 	// own, but the function it belongs to can resolve the name.
 	if (!type && name && symbol?.kind === 'parameter') {
 		const info = describe(symbol, name, 'parameter', 'local', path, texts, location, false);
-		if (info) declare(state, info, path);
+		if (info) {
+			if (owner) info.owner = owner;
+			declare(state, info, path);
+		}
 		return;
 	}
 

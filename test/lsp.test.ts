@@ -42,6 +42,8 @@ const LITERAL = 'file:///c:/project/main.mlgc';
 const INCLUDE_HEADER = 'file:///c%3A/project/lib.h';
 const INCLUDE_MAIN = 'file:///c%3A/project/include-main.mlgc';
 const INCLUDE_OTHER = 'file:///c%3A/project/other-main.mlgc';
+/** A file whose only mistake is an undeclared processor block. */
+const MESSAGE_DOC = 'file:///c%3A/project/message.mlgc';
 
 const BROKEN = 'int main(void) {\n    return thisDoesNotExist;\n}\n';
 
@@ -49,6 +51,8 @@ interface Published {
 	uri: string;
 	count: number;
 	messages: string[];
+	/** The diagnostics as the server sent them, for code-action requests. */
+	diagnostics: Array<{ message: string; range: unknown }>;
 }
 
 interface RpcMessage {
@@ -107,6 +111,7 @@ function connect(target: string) {
 				uri: message.params.uri,
 				count: diagnostics.length,
 				messages: diagnostics.map((diagnostic: { message: string }) => diagnostic.message),
+				diagnostics,
 			});
 		}
 	};
@@ -230,6 +235,8 @@ describe('the language server, over the wire', () => {
 			'renameProvider',
 			'completionProvider',
 			'signatureHelpProvider',
+			'codeActionProvider',
+			'semanticTokensProvider',
 			'documentSymbolProvider',
 		]) {
 			assert.ok(capability in capabilities, `the server did not advertise ${capability}`);
@@ -353,8 +360,45 @@ describe('the language server, over the wire', () => {
 		assert.ok(!names.includes('fromBuffer'), 'a header declaration leaked into the outline');
 	});
 
+	it('offers to declare a missing processor block', async () => {
+		open(MESSAGE_DOC, 'mlgc', 'int main(void) {\n    print("x");\n    printflush(message1);\n}\n');
+		const published = await client.waitForPublish(MESSAGE_DOC, 20000);
+		const diagnostic = published.diagnostics.find(entry =>
+			/Undeclared identifier 'message1'/.test(entry.message)
+		);
+		assert.ok(diagnostic, `no undeclared-message1 diagnostic: ${published.messages.join(' | ')}`);
+
+		const actions = (await client.request('textDocument/codeAction', {
+			textDocument: { uri: MESSAGE_DOC },
+			range: diagnostic.range,
+			context: { diagnostics: [diagnostic] },
+		})) as Array<{ title: string; edit: { changes: Record<string, Array<{ newText: string }>> } }>;
+
+		assert.equal(actions.length, 1, JSON.stringify(actions));
+		assert.match(actions[0].title, /auto device message1;/);
+		assert.equal(actions[0].edit.changes[MESSAGE_DOC][0].newText, 'auto device message1;\n');
+	});
+
+	it('answers semantic tokens for the open document', async () => {
+		const result = (await client.request('textDocument/semanticTokens/full', {
+			textDocument: { uri: INCLUDE_MAIN },
+		})) as { data: number[] };
+
+		assert.ok(Array.isArray(result?.data), 'no semantic token data');
+		assert.ok(result.data.length > 0, 'semantic tokens came back empty');
+		// `main` is at line 1, character 4, four long: a function declaration.
+		assert.deepEqual(result.data.slice(0, 5), [1, 4, 4, 2, 1]);
+	});
+
 	it('never publishes a finding under a uri that is not a document', () => {
-		const known = new Set([CANONICAL, LITERAL, INCLUDE_HEADER, INCLUDE_MAIN, INCLUDE_OTHER]);
+		const known = new Set([
+			CANONICAL,
+			LITERAL,
+			INCLUDE_HEADER,
+			INCLUDE_MAIN,
+			INCLUDE_OTHER,
+			MESSAGE_DOC,
+		]);
 		const stray = client.published.filter(entry => entry.count > 0 && !known.has(entry.uri));
 		assert.deepEqual(stray, [], 'a finding was attributed to something the editor does not have');
 	});

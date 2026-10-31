@@ -8,6 +8,10 @@ Logic (`mlog`).
   cannot take the editor with it.
 - **Navigation**: go to definition, find references, rename symbol, hover,
   signature help, completion.
+- **Quick fixes** for the dialect's own mistakes, such as declaring a missing
+  processor block (`message1`) at file scope.
+- **Semantic highlighting** on top of the grammar: functions, parameters, locals
+  and struct fields are coloured from the analyser rather than guessed from text.
 - **A compile button** in the editor title bar. The `mlog` opens in a read-only
   preview and can be copied to the clipboard; nothing is ever written to disk.
 - **Syntax highlighting generated from the compiler's own token tables**, so it

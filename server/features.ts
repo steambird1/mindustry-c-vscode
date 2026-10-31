@@ -7,6 +7,7 @@
  */
 
 import type {
+	CompilerDiagnostic,
 	DocumentIndex,
 	ReferenceInfo,
 	Range,
@@ -35,6 +36,13 @@ export interface IndexedDocument {
 	uri: string;
 	index: DocumentIndex;
 	text: string;
+	/**
+	 * The file's own fs path, when it has one.
+	 *
+	 * Used to tell this document's functions from ones that came in through an
+	 * `#include`, whose offsets belong to another file.
+	 */
+	mainPath?: string | null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -477,7 +485,7 @@ export function complete(document: IndexedDocument, position: Position): Complet
 		return constantCompletions(document, position);
 	}
 
-	return generalCompletions(document);
+	return generalCompletions(document, position);
 }
 
 /**
@@ -554,15 +562,39 @@ function textBefore(document: IndexedDocument, position: Position): string {
 	return lineText(document.text, position.line).slice(0, position.character);
 }
 
-function generalCompletions(document: IndexedDocument): CompletionItem[] {
+/**
+ * The function whose body contains `offset`, by source order.
+ *
+ * Functions cannot nest in this dialect, so the last one declared at or before
+ * the cursor is the one the cursor is in. A function that came from an
+ * `#include` carries offsets into that header, so it is skipped: the comparison
+ * would be against the wrong file.
+ */
+function enclosingFunction(document: IndexedDocument, offset: number): string | null {
+	let best: SymbolInfo | null = null;
+	for (const symbol of document.index.symbols) {
+		if (symbol.kind !== 'function' || symbol.scope !== 'file') continue;
+		if (document.mainPath && symbol.path && !samePath(document.mainPath, symbol.path)) continue;
+		if (symbol.declarationOffset > offset) continue;
+		if (!best || symbol.declarationOffset > best.declarationOffset) best = symbol;
+	}
+	return best?.name ?? null;
+}
+
+function generalCompletions(document: IndexedDocument, position: Position): CompletionItem[] {
 	const items: CompletionItem[] = [];
 	const seen = new Set<string>();
+	const owner = enclosingFunction(document, offsetOf(document.text, position));
 
 	for (const symbol of document.index.symbols) {
 		// A field is only nameable through an object, so offering it bare would
 		// suggest `x` where only `p.x` compiles. It is offered after a `.`
 		// instead, by `memberCompletions`.
 		if (symbol.kind === 'field') continue;
+		// `scope` is the only visibility the compiler records. `owner` narrows a
+		// local to the function it is declared in; without it the list carries
+		// every other function's variables and parameters.
+		if (symbol.scope === 'local' && (owner === null || symbol.owner !== owner)) continue;
 		if (seen.has(symbol.name)) continue;
 		seen.add(symbol.name);
 		items.push({
@@ -809,6 +841,154 @@ function chooseSignature(signatures: Signature[], argumentCount: number): number
 		if (signatures[index].parameters.length > signatures[richest].parameters.length) richest = index;
 	}
 	return richest;
+}
+
+/* ------------------------------------------------------------------ *
+ * Code actions
+ * ------------------------------------------------------------------ */
+
+export interface QuickFix {
+	title: string;
+	/** The message of the diagnostic this fixes. */
+	diagnostic: string;
+	edit: WorkspaceEdit;
+}
+
+const UNDECLARED_IDENTIFIER = /^Undeclared identifier '([^']+)'$/;
+
+/**
+ * Fixes for the diagnostics the client asked about.
+ *
+ * The one this dialect invites is a linked processor block: `message1` is not a
+ * keyword, so it has to be declared at file scope. Only names ending in a digit
+ * are offered the fix -- linked blocks always carry an index, and a bare typo
+ * like `helper` should not silently become a device declaration.
+ */
+export function quickFixes(
+	document: IndexedDocument,
+	diagnostics: readonly Pick<CompilerDiagnostic, 'message'>[]
+): QuickFix[] {
+	const actions: QuickFix[] = [];
+	const insertion = positionIn(document.text, declarationInsertionOffset(document.text));
+
+	for (const diagnostic of diagnostics) {
+		const match = UNDECLARED_IDENTIFIER.exec(diagnostic.message);
+		if (!match) continue;
+		const name = match[1];
+		if (!/\d$/.test(name)) continue;
+		actions.push({
+			title: `Declare '${name}' as a processor block: auto device ${name};`,
+			diagnostic: diagnostic.message,
+			edit: {
+				changes: {
+					[document.uri]: [
+						{
+							range: { start: insertion, end: insertion },
+							newText: `auto device ${name};\n`,
+						},
+					],
+				},
+			},
+		});
+	}
+	return actions;
+}
+
+/**
+ * Where a file-scope declaration belongs: after the leading blank lines and
+ * preprocessor directives, before the first real code.
+ */
+function declarationInsertionOffset(text: string): number {
+	let offset = 0;
+	for (const line of text.split('\n')) {
+		const trimmed = line.trim();
+		if (trimmed !== '' && !trimmed.startsWith('#')) break;
+		offset += line.length + 1;
+	}
+	return Math.min(offset, text.length);
+}
+
+/* ------------------------------------------------------------------ *
+ * Semantic tokens
+ * ------------------------------------------------------------------ */
+
+export const SEMANTIC_TOKEN_TYPES = ['variable', 'parameter', 'function', 'type', 'property'] as const;
+export const SEMANTIC_TOKEN_MODIFIERS = ['declaration'] as const;
+
+/**
+ * The identifiers this file declares or uses, typed from the symbol index.
+ *
+ * TextMate already colours keywords, literals and `@content`; what it cannot
+ * know is whether `helper` is a function, a parameter or a struct field. Only
+ * resolved references are emitted, so an unresolved name keeps whatever the
+ * grammar gave it rather than being painted as a variable.
+ *
+ * Positions are relative to `document.text`; a caller holding a stale index
+ * must not use this, or the ranges land on the wrong words.
+ */
+export function semanticTokens(document: IndexedDocument): number[] {
+	const tokens: Array<{ line: number; character: number; length: number; type: number; modifiers: number }> = [];
+	const seen = new Set<string>();
+
+	for (const reference of document.index.references) {
+		const target = reference.target;
+		if (!target) continue;
+		// References from an `#include` carry offsets into that header.
+		if (document.mainPath && reference.path && !samePath(reference.path, document.mainPath)) continue;
+		if (reference.range.start.line !== reference.range.end.line) continue;
+
+		const type = semanticTokenType(target);
+		if (type < 0) continue;
+
+		const key = `${reference.range.start.line}:${reference.range.start.character}:${reference.range.end.character}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+
+		tokens.push({
+			line: reference.range.start.line,
+			character: reference.range.start.character,
+			length: Math.max(1, reference.range.end.character - reference.range.start.character),
+			type,
+			modifiers: reference.isDeclaration ? 1 : 0,
+		});
+	}
+
+	tokens.sort((a, b) => a.line - b.line || a.character - b.character);
+
+	const data: number[] = [];
+	let line = 0;
+	let character = 0;
+	for (const token of tokens) {
+		const deltaLine = token.line - line;
+		data.push(
+			deltaLine,
+			deltaLine === 0 ? token.character - character : token.character,
+			token.length,
+			token.type,
+			token.modifiers
+		);
+		line = token.line;
+		character = token.character;
+	}
+	return data;
+}
+
+/** Index into `SEMANTIC_TOKEN_TYPES`, or -1 for a kind we do not paint. */
+function semanticTokenType(symbol: SymbolInfo): number {
+	switch (symbol.kind) {
+		case 'function':
+			return 2;
+		case 'type':
+			return 3;
+		case 'field':
+			return 4;
+		case 'parameter':
+			return 1;
+		case 'variable':
+			return 0;
+		default:
+			return -1;
+	}
 }
 
 /* ------------------------------------------------------------------ *

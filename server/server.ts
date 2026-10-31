@@ -12,6 +12,7 @@
 
 import {
 	createConnection,
+	CodeActionKind,
 	CompletionItemKind as LspCompletionItemKind,
 	DiagnosticSeverity,
 	DidChangeWatchedFilesNotification,
@@ -42,9 +43,13 @@ import {
 	hover,
 	offsetOf,
 	outline,
+	quickFixes,
 	references,
 	rename,
+	semanticTokens,
 	signatureHelp,
+	SEMANTIC_TOKEN_MODIFIERS,
+	SEMANTIC_TOKEN_TYPES,
 	type CompletionItem,
 	type IndexedDocument,
 } from './features';
@@ -144,6 +149,14 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
 			renameProvider: { prepareProvider: true },
 			completionProvider: { triggerCharacters: ['.', '@'], resolveProvider: false },
 			signatureHelpProvider: { triggerCharacters: ['(', ','] },
+			codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
+			semanticTokensProvider: {
+				legend: {
+					tokenTypes: [...SEMANTIC_TOKEN_TYPES],
+					tokenModifiers: [...SEMANTIC_TOKEN_MODIFIERS],
+				},
+				full: true,
+			},
 			documentSymbolProvider: true,
 		},
 	};
@@ -302,6 +315,7 @@ function publish(response: AnalysisResponse): void {
 			uri: response.uri,
 			index: response.index,
 			text: document.getText(),
+			mainPath: fromUri(response.uri),
 		});
 		if (settings.diagnostics.openIncludes) void watchIncludes(response.index.includes);
 	}
@@ -509,6 +523,33 @@ connection.onSignatureHelp(params => {
 	const document = documents.get(params.textDocument.uri);
 	const current = document ? { ...entry, text: document.getText() } : entry;
 	return signatureHelp(current, params.position);
+});
+
+connection.onCodeAction(params => {
+	const entry = indexed(params.textDocument.uri, { allowStale: true });
+	if (!entry) return [];
+	const document = documents.get(params.textDocument.uri);
+	const current = document ? { ...entry, text: document.getText() } : entry;
+	const diagnostics = params.context.diagnostics ?? [];
+	return quickFixes(current, diagnostics).map(fix => ({
+		title: fix.title,
+		kind: CodeActionKind.QuickFix,
+		// Attach the diagnostic it was derived from, so the client groups it
+		// under the squiggle instead of offering it at the top of the file.
+		diagnostics: diagnostics.filter(diagnostic => diagnostic.message === fix.diagnostic),
+		edit: fix.edit,
+	}));
+});
+
+connection.onRequest('textDocument/semanticTokens/full', (params: { textDocument: { uri: string } }) => {
+	// Strict, unlike completion: a stale index would paint the previous text's
+	// ranges onto the current one. An empty answer leaves TextMate in charge
+	// until the next analysis lands.
+	const entry = indexed(params.textDocument.uri);
+	if (!entry) return { data: [] };
+	const document = documents.get(params.textDocument.uri);
+	const current = document ? { ...entry, text: document.getText() } : entry;
+	return { data: semanticTokens(current) };
 });
 
 connection.onDocumentSymbol(params => {

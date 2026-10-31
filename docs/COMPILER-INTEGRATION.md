@@ -152,9 +152,10 @@ bundles the compiler to a temporary ESM file, imports it, and deletes it.
 
 ## Reading the analyser without depending on it
 
-Language features (hover, go-to-definition, references, rename, completion and
-the outline) need no compiler change. After `analyze()`, `SemanticAnalyzer` has
-already linked every AST node to a `Scope` and resolved every named node:
+Language features (hover, go-to-definition, references, rename, completion,
+signature help, quick fixes, semantic tokens and the outline) need no compiler
+change. After `analyze()`, `SemanticAnalyzer` has already linked every AST node
+to a `Scope` and resolved every named node:
 
 ```js
 const entry = node.scope.lookup(node.name);   // SymbolEntry | null
@@ -191,6 +192,12 @@ compiler changes one of these, this is the list to re-check.
 field records the struct that declares it (`SymbolInfo.container`). Without it,
 the only way to say that `p.x` is a field of `point` — or to offer `point`'s
 members after `p.` — is to read the text in front of the dot.
+
+Two more fields are derived rather than resolved: a local's `owner` (the
+function that declares it) and a function's `parameters`. Completion uses
+`owner` to leave another function's locals out — the index has no block ranges,
+so the function is the finest granularity available — and signature help uses
+`parameters` for the names, since `type` alone renders `int(int, int)`.
 
 ### Checking these claims against the compiler
 

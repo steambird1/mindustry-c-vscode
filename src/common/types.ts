@@ -160,6 +160,13 @@ export interface SymbolInfo {
 	 * and wants to know which `(void)` means "no parameters".
 	 */
 	parameters?: ParameterInfo[];
+	/**
+	 * For a local, the function whose body declares it.
+	 *
+	 * Completion uses this to stop offering another function's locals; the index
+	 * has no block ranges, so the function is the finest granularity available.
+	 */
+	owner?: string;
 }
 
 /** One entry in a function's parameter list. */

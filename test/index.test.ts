@@ -32,7 +32,9 @@ import {
 	positionIn,
 	references,
 	rename,
+	semanticTokens,
 	signatureHelp,
+	quickFixes,
 	type IndexedDocument,
 } from '../server/features';
 import type { AnalysisRequest, DocumentIndex } from '../src/common/types';
@@ -112,7 +114,7 @@ before(async () => {
 	);
 	assert.ok(response.index, 'no index was produced');
 	index = response.index;
-	document = { uri: URI, index, text: SOURCE };
+	document = { uri: URI, index, text: SOURCE, mainPath: PATH };
 });
 
 /** The text a position covers, which must be the name it claims to be. */
@@ -430,6 +432,30 @@ describe('completion', () => {
 		assert.ok(labels.has('while'), 'no keywords offered');
 	});
 
+	it('offers this function`s locals but not another`s', async () => {
+		const SCOPED = `int first(void) {
+	int alpha = 1;
+	return alpha;
+}
+
+int second(int beta) {
+	int gamma = 2;
+	return beta + gamma;
+}
+`;
+		const response = await analyse(request(SCOPED), host);
+		assert.ok(response.index, 'no index for the scope fixture');
+		const scoped: IndexedDocument = { uri: URI, index: response.index, text: SCOPED, mainPath: PATH };
+
+		const offset = SCOPED.indexOf('return beta + gamma;');
+		const labels = new Set(complete(scoped, positionIn(SCOPED, offset)).map(item => item.label));
+
+		assert.ok(labels.has('gamma'), 'this function`s local is missing');
+		assert.ok(labels.has('beta'), 'the parameter is missing');
+		assert.ok(labels.has('first') && labels.has('second'), 'file-scope functions are missing');
+		assert.ok(!labels.has('alpha'), 'another function`s local leaked into the list');
+	});
+
 	it('does not offer a struct field as a bare name', () => {
 		// `x` is only nameable through an object, so offering it bare would
 		// suggest source that does not compile.
@@ -503,6 +529,84 @@ int main() {
 
 	it('is null when the cursor is not inside a call', () => {
 		assert.equal(signatureHelp(calls, positionIn(CALLS, CALLS.indexOf('int add'))), null);
+	});
+});
+
+describe('quick fixes', () => {
+	const WITH_DIRECTIVE = `#define FOO 1
+
+int main(void) {
+    printflush(message1);
+}
+`;
+
+	it('declares a missing processor block after the directives', async () => {
+		const response = await analyse(request(WITH_DIRECTIVE), host);
+		assert.ok(response.index, 'no index for the quick-fix fixture');
+		const scoped: IndexedDocument = { uri: URI, index: response.index, text: WITH_DIRECTIVE, mainPath: PATH };
+
+		const fixes = quickFixes(scoped, [{ message: "Undeclared identifier 'message1'" }]);
+		assert.equal(fixes.length, 1, 'no fix offered');
+		assert.match(fixes[0].title, /auto device message1;/);
+
+		const edits = fixes[0].edit.changes[URI];
+		assert.equal(edits.length, 1);
+		assert.equal(edits[0].newText, 'auto device message1;\n');
+		assert.deepEqual(
+			edits[0].range.start,
+			positionIn(WITH_DIRECTIVE, WITH_DIRECTIVE.indexOf('int main')),
+			'the declaration was not placed after the directive'
+		);
+	});
+
+	it('does not offer to declare a name that is not block-like', () => {
+		assert.deepEqual(quickFixes(document, [{ message: "Undeclared identifier 'helper'" }]), []);
+	});
+
+	it('ignores diagnostics it does not understand', () => {
+		assert.deepEqual(quickFixes(document, [{ message: 'Expected variable name in declaration' }]), []);
+	});
+});
+
+describe('semantic tokens', () => {
+	const decode = (data: number[]) => {
+		const tokens: Array<{ line: number; character: number; length: number; type: number; modifiers: number }> = [];
+		let line = 0;
+		let character = 0;
+		for (let index = 0; index < data.length; index += 5) {
+			line += data[index];
+			character = data[index] === 0 ? character + data[index + 1] : data[index + 1];
+			tokens.push({
+				line,
+				character,
+				length: data[index + 2],
+				type: data[index + 3],
+				modifiers: data[index + 4],
+			});
+		}
+		return tokens;
+	};
+
+	const at = (tokens: ReturnType<typeof decode>, offset: number) => {
+		const position = positionIn(SOURCE, offset);
+		return tokens.find(token => token.line === position.line && token.character === position.character);
+	};
+
+	it('types functions, parameters, locals and fields', () => {
+		const tokens = decode(semanticTokens(document));
+		assert.ok(tokens.length > 0, 'no semantic tokens');
+
+		const total = at(tokens, SOURCE.indexOf('total(int a'));
+		assert.equal(total?.type, 2, 'the function name is not a function');
+		assert.equal(total?.modifiers, 1, 'the declaration modifier is missing');
+
+		assert.equal(at(tokens, SOURCE.indexOf('int a, int b') + 'int '.length)?.type, 1, 'a parameter is missing');
+		assert.equal(at(tokens, SOURCE.indexOf('point p;') + 'point '.length)?.type, 0, 'a local is missing');
+		assert.equal(at(tokens, SOURCE.indexOf('int x;') + 'int '.length)?.type, 4, 'a field is missing');
+
+		const member = at(tokens, SOURCE.indexOf('p.x = 1') + 2);
+		assert.equal(member?.type, 4);
+		assert.equal(member?.modifiers, 0, 'a use was marked as a declaration');
 	});
 });
 
