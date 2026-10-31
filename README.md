@@ -102,3 +102,8 @@ npm run gen        # regenerate the TextMate grammar from the compiler's tables
 
 How this talks to the compiler, what was patched to make that possible, and the
 known rough edges are all in [docs/COMPILER-INTEGRATION.md](docs/COMPILER-INTEGRATION.md).
+
+## License
+
+MIT. The extension bundles the Mindustry-C compiler, which is MIT as well. See
+[LICENSE](LICENSE).

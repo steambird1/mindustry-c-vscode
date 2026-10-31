@@ -221,17 +221,18 @@ silently:
   returns `null` even though `myint` resolves everywhere else, so a typedef's
   type is read out of the text between the `typedef` keyword and the name.
 - **The dialect has no `enum`.** `enum colour { red, green };` is a parse error
-  (`Expected variable name in declaration`). Still true in `b3c3a30`.
+  (`Expected variable name in declaration`). Still true in the bundled compiler
+  (`9e399f4`).
 - **`@`-constants parse as identifiers named after the sigil** (`@copper`), with
   no symbol. They are left out of the index — indexing them unresolved would
   make hover claim a perfectly valid content id is undeclared — and answered from
   the generated tables instead.
-- **esbuild warns about the compiler's own source**: a duplicate `REMOTE` in
-  `mindcLexer.js`, a duplicate member `raw_replace` in `mindcInstruction.js`, and
-  a duplicate `AssignmentExpression` case in `mindcOptimizer.js`. `scripts/build.mjs`
-  collapses these into one `note:` line so they do not drown out our own
-  warnings. The duplicate `POINTER_TYPE` key that used to be on this list was
-  removed upstream.
+- **esbuild warns about the compiler's own source**: a duplicate member
+  `raw_replace` in `mindcInstruction.js`, and a duplicate `AssignmentExpression`
+  case in `mindcOptimizer.js`. `scripts/build.mjs` collapses these into one
+  `note:` line so they do not drown out our own warnings. The duplicate
+  `POINTER_TYPE` and `REMOTE` keys that used to be on this list were removed
+  upstream.
 
 One gap once recorded here is closed upstream as of `b3c3a30`: `for (int i = 0;
 …)` parses and compiles, empty clauses (`for (; t < 3; t++)`) included. Re-checked
