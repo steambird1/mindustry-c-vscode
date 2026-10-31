@@ -281,6 +281,36 @@ describe('go to definition', () => {
 	});
 });
 
+describe('type rendering', () => {
+	it('shows byname after the star, on variables and struct members', async () => {
+		const BYNAME = `int *byname named;
+int *plain;
+struct holder { int *byname member; int *raw; };
+int main(void) { return 0; }
+`;
+		const response = await analyse(request(BYNAME), host);
+		assert.deepEqual(
+			response.diagnostics.map(diagnostic => diagnostic.message),
+			[],
+			'the byname fixture must compile cleanly'
+		);
+		assert.ok(response.index, 'no index for the byname fixture');
+		const byname: IndexedDocument = { uri: URI, index: response.index, text: BYNAME, mainPath: PATH };
+
+		const named = byname.index.symbols.find(symbol => symbol.name === 'named' && symbol.scope === 'file');
+		assert.equal(named?.type, 'int *byname');
+		const plain = byname.index.symbols.find(symbol => symbol.name === 'plain' && symbol.scope === 'file');
+		assert.equal(plain?.type, 'int *');
+
+		const holder = byname.index.structs.find(struct => struct.name === 'holder');
+		assert.equal(holder?.members.find(member => member.name === 'member')?.type, 'int *byname');
+		assert.equal(holder?.members.find(member => member.name === 'raw')?.type, 'int *');
+
+		const shown = hover(byname, positionIn(BYNAME, BYNAME.indexOf('named')));
+		assert.match(shown?.contents ?? '', /int \*byname named/);
+	});
+});
+
 describe('find references', () => {
 	it('lists the declaration and every use', () => {
 		const found = references([document], document, positionIn(SOURCE, at('total(p.x')), toUri);

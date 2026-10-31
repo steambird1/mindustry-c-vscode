@@ -102,6 +102,8 @@ interface TypeMember {
 	name: string;
 	type?: TypeInfo;
 	offset?: number;
+	/** Set for `int *byname p`: the pointer travels by name, not by address. */
+	namePointer?: boolean;
 	[unknown: string]: unknown;
 }
 
@@ -116,6 +118,10 @@ interface SymbolEntry {
 	kind: string;
 	type?: unknown;
 	location?: AstLocation | null;
+	/** The compiler resolved this pointer as travelling by name (`byname`). */
+	usesNamePointer?: boolean;
+	/** `byname` was written explicitly, not merely needed. */
+	forcedNamePointer?: boolean;
 	[unknown: string]: unknown;
 }
 
@@ -222,8 +228,11 @@ function renderTypeInfo(type: TypeInfo | null | undefined): string {
 			return renderSignature(type as unknown as FunctionSignature);
 		default: {
 			const name = type.name || type.kind || '?';
-			const qualifiers = type.qualifiers?.length ? `${type.qualifiers.join(' ')} ` : '';
-			return `${qualifiers}${name}`;
+			// `byname` belongs after the pointer's `*`, not before the base type;
+			// it is appended where the declarator is rendered.
+			const qualifiers = (type.qualifiers ?? []).filter(qualifier => qualifier !== 'byname');
+			const prefix = qualifiers.length ? `${qualifiers.join(' ')} ` : '';
+			return `${prefix}${name}`;
 		}
 	}
 }
@@ -303,7 +312,7 @@ function parameterType(
  * TypeInfo) or a function signature. Both are plain objects here, so they are
  * told apart by shape rather than by a tag the compiler may rename.
  */
-export function renderSymbolType(type: unknown): string {
+export function renderSymbolType(type: unknown, entry?: SymbolEntry | null): string {
 	if (type === null || type === undefined) return '?';
 	if (typeof type === 'string') return type;
 	const candidate = type as {
@@ -317,13 +326,25 @@ export function renderSymbolType(type: unknown): string {
 	if (typeof candidate.returnType === 'string' || Array.isArray(candidate.parameters)) {
 		return renderSignature(candidate as FunctionSignature);
 	}
-	const base = renderTypeInfo(candidate.type);
+	const rendered = renderTypeInfo(candidate.type);
+	// `byname` is not in the type's qualifiers: it is a property of the symbol,
+	// resolved by the analyser rather than written on the type it points to.
+	const base = namePointerOf(entry) ? withByname(rendered) : rendered;
 	const flags = [
 		candidate.isConst ? 'const' : '',
 		candidate.isVolatile ? 'volatile' : '',
 		candidate.isExtern ? 'extern' : '',
 	].filter(Boolean);
 	return flags.length ? `${base} ${flags.join(' ')}` : base;
+}
+
+function namePointerOf(entry: SymbolEntry | null | undefined): boolean {
+	return entry?.usesNamePointer === true || entry?.forcedNamePointer === true;
+}
+
+/** `int *` + `byname` -> `int *byname`; the qualifier sits after the `*`. */
+function withByname(base: string): string {
+	return base.endsWith('*') ? `${base}byname` : `${base} byname`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -589,8 +610,10 @@ function memberTypeText(
 	const resolved = state.structTypes
 		.get(structName)
 		?.members?.find(candidate => candidate.name === memberName);
-	if (resolved?.type) return renderTypeInfo(resolved.type);
-	return renderSpecifier(member.type as TypeInfo | null | undefined);
+	const base = resolved?.type
+		? renderTypeInfo(resolved.type)
+		: renderSpecifier(member.type as TypeInfo | null | undefined);
+	return resolved?.namePointer === true ? withByname(base) : base;
 }
 
 /** A `TypeSpecifier`, as far as it can be rendered without the analyser. */
@@ -599,8 +622,22 @@ function renderSpecifier(specifier: TypeInfo | null | undefined): string {
 	const name = asName(specifier.typeName) ?? '?';
 	const stars = '*'.repeat(Math.max(0, Number(specifier.pointerDepth) || 0));
 	const base = stars ? `${name} ${stars}` : name;
+	const rendered = namePointerIn(specifier.pointerQualifiers) ? withByname(base) : base;
 	const arrays = Array.isArray(specifier.arrayDimensions) ? specifier.arrayDimensions.length : 0;
-	return `${base}${'[]'.repeat(arrays)}`;
+	return `${rendered}${'[]'.repeat(arrays)}`;
+}
+
+/**
+ * Whether a `TypeSpecifier` carries `byname` on any pointer level.
+ *
+ * `pointerQualifiers` holds one list per level, so `int *byname p` is
+ * `[['byname']]`; a flat list is accepted too.
+ */
+function namePointerIn(pointerQualifiers: unknown): boolean {
+	if (!Array.isArray(pointerQualifiers)) return false;
+	return pointerQualifiers.some(level =>
+		Array.isArray(level) ? level.includes('byname') : level === 'byname'
+	);
 }
 
 function bitFieldText(member: AstNode, texts: FileText, path: string): { bitField: string } | null {
@@ -789,10 +826,14 @@ function visit(
 		const offset = nameOffset(texts, path ?? '', location, name, false);
 		if (offset < 0) return;
 		const resolved = node.dataType as TypeInfo | null | undefined;
+		const base = resolved ? renderTypeInfo(resolved) : renderSymbolType(symbol?.type, symbol);
 		const info: SymbolInfo = {
 			kind: 'variable',
 			name,
-			type: resolved ? renderTypeInfo(resolved) : renderSymbolType(symbol?.type),
+			// `byname` is on the symbol, not on the declared type, so it is
+			// appended where the declarator is rendered rather than in
+			// `renderTypeInfo`.
+			type: resolved && namePointerOf(symbol) ? withByname(base) : base,
 			scope: local,
 			path,
 			range: texts.range(path ?? '', offset, name.length),
@@ -991,7 +1032,7 @@ function describe(
 	return {
 		kind,
 		name,
-		type: symbol ? renderSymbolType(symbol.type) : '?',
+		type: symbol ? renderSymbolType(symbol.type, symbol) : '?',
 		scope,
 		path: declarationPath,
 		range: texts.range(declarationPath, offset, name.length),
