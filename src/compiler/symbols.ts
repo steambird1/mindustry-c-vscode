@@ -40,7 +40,7 @@
  * under the name the user wrote, one entry per declaration.
  */
 
-import type { DocumentIndex, ReferenceInfo, StructInfo, SymbolInfo } from '../common/types';
+import type { DocumentIndex, ParameterInfo, ReferenceInfo, StructInfo, SymbolInfo } from '../common/types';
 
 /* ------------------------------------------------------------------ *
  * Structural views of the compiler's AST
@@ -239,6 +239,59 @@ function renderSignature(signature: FunctionSignature): string {
 		.map(parameter => parameter.type ?? '?')
 		.join(', ');
 	return `${signature.returnType ?? '?'}(${parameters}${signature.hasVarArgs ? ', ...' : ''})`;
+}
+
+/**
+ * A function's parameter list, for signature help.
+ *
+ * `f(void)` is C's "no parameters", but the parser hands back one parameter of
+ * type `void` with no name; it is dropped so signature help does not claim the
+ * function takes an argument.
+ */
+function renderParameters(node: AstNode, path: string | null, texts: FileText): ParameterInfo[] | undefined {
+	if (!Array.isArray(node.parameters)) return undefined;
+	const parameters = node.parameters.map(parameter => {
+		const name = typeof parameter.name === 'string' ? parameter.name : null;
+		return { name, type: parameterType(parameter, path, texts, name) };
+	});
+	if (parameters.length === 1 && parameters[0].name === null && parameters[0].type === 'void') return [];
+	return parameters;
+}
+
+/**
+ * The parameter's type as it was written.
+ *
+ * A `TypeSpecifier` keeps only the keyword for a struct parameter (`struct`,
+ * not `struct point`), so the source between the declaration and the name is
+ * the reliable spelling. Array dimensions are written after the name, so they
+ * are appended from the declarator.
+ */
+function parameterType(
+	parameter: AstNode,
+	path: string | null,
+	texts: FileText,
+	name: string | null
+): string {
+	const dimensions = Array.isArray(parameter.arrayDimensions) ? parameter.arrayDimensions : [];
+	const suffix = dimensions
+		.map(dimension => {
+			const value = dimension && typeof dimension === 'object' ? (dimension as AstNode).value : undefined;
+			return `[${typeof value === 'number' ? value : ''}]`;
+		})
+		.join('');
+
+	const location = parameter.location;
+	if (path && location) {
+		const start = texts.offset(path, location.line, location.column, location.index);
+		const nameStart = name ? nameOffset(texts, path, location, name, false) : -1;
+		if (nameStart > start) return `${texts.text(path).slice(start, nameStart).trim()}${suffix}`;
+	}
+
+	// No source to read (an untitled buffer): the specifier is all there is.
+	const specifier = parameter.type as AstNode | null;
+	const base = specifier && typeof specifier.typeName === 'string' ? specifier.typeName : '?';
+	const depth = specifier && typeof specifier.pointerDepth === 'number' ? specifier.pointerDepth : 0;
+	return `${base}${suffix}${depth > 0 ? ` ${'*'.repeat(depth)}` : ''}`;
 }
 
 /**
@@ -702,7 +755,10 @@ function visit(
 		// Overloads are `name__ov1` internally but share the source name, so
 		// each declaration gets its own entry under the name the user wrote.
 		const info = describe(symbol, sourceName(name), 'function', local, path, texts, location, true);
-		if (info) declare(state, info, path);
+		if (info) {
+			info.parameters = renderParameters(node, path, texts);
+			declare(state, info, path);
+		}
 		return;
 	}
 

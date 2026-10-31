@@ -153,6 +153,21 @@ export interface SymbolInfo {
 	 * to is to read the text in front of the dot.
 	 */
 	container?: string;
+	/**
+	 * For a function, its parameters in source order.
+	 *
+	 * `type` alone renders as `int(int, int)`; signature help wants the names,
+	 * and wants to know which `(void)` means "no parameters".
+	 */
+	parameters?: ParameterInfo[];
+}
+
+/** One entry in a function's parameter list. */
+export interface ParameterInfo {
+	/** The name, when the declaration has one: a lone `void` has none. */
+	name: string | null;
+	/** Rendered type, e.g. `int *`. */
+	type: string;
 }
 
 /** A struct/union/enum, with the members completion needs after a `.`. */

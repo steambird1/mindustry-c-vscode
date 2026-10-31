@@ -7,7 +7,7 @@ Logic (`mlog`).
   parse and analyse only, debounced, on a worker thread so a compiler crash
   cannot take the editor with it.
 - **Navigation**: go to definition, find references, rename symbol, hover,
-  completion.
+  signature help, completion.
 - **A compile button** in the editor title bar. The `mlog` opens in a read-only
   preview and can be copied to the clipboard; nothing is ever written to disk.
 - **Syntax highlighting generated from the compiler's own token tables**, so it

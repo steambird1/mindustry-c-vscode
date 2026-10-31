@@ -229,6 +229,7 @@ describe('the language server, over the wire', () => {
 			'referencesProvider',
 			'renameProvider',
 			'completionProvider',
+			'signatureHelpProvider',
 			'documentSymbolProvider',
 		]) {
 			assert.ok(capability in capabilities, `the server did not advertise ${capability}`);
@@ -274,6 +275,20 @@ describe('the language server, over the wire', () => {
 		const result = await client.waitForPublish(INCLUDE_MAIN, 20000);
 
 		assert.equal(result.count, 0, `expected a clean run, got: ${result.messages.join(' | ')}`);
+	});
+
+	it('offers the signature of the function being called', async () => {
+		// Inside `fromBuffer(1)`. The declaration lives in the header, which is
+		// only in the editor, so this also proves parameter lists cross includes.
+		const help = await client.request('textDocument/signatureHelp', {
+			textDocument: { uri: INCLUDE_MAIN },
+			position: { line: 2, character: 22 },
+		});
+
+		assert.ok(help, 'no signature help inside the call');
+		const active = help.signatures[help.activeSignature];
+		assert.equal(active.label, 'int fromBuffer(int value)');
+		assert.equal(help.activeParameter, 0);
 	});
 
 	it('answers completion while the index is one keystroke behind', async () => {

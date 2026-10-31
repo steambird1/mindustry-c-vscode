@@ -184,6 +184,7 @@ compiler changes one of these, this is the list to re-check.
 | A pointer's `members` is `[]`, with the real members on `pointerTo` | Reading `.members` alone silently loses every member of a struct reached through a pointer or an array | Types are unwrapped through `pointerTo` before members are read |
 | The second and later overloads of a function are renamed `name__ov1` | The user never wrote that, and it must never reach completion or rename | Indexed under the source name, one entry per declaration, each with its own signature |
 | A parameter node has a `name` and a `location` but **no `symbol`** | Only the function's `Scope` can resolve it | The walk threads the nearest enclosing `Scope` down and resolves untyped named nodes through it |
+| A parameter's `type` is a `TypeSpecifier`, and for `struct point` it holds only `struct` | Rendering the specifier gives `struct p`, losing the struct's name; the resolved `dataType` is not attached to parameters | Signature help reads the declared type from the source between the parameter's location and its name; the specifier is only the fallback for an untitled buffer |
 | Every node's `symbol` field is a flat `SymbolEntry` carrying the **same** name and location as the node it was resolved from | A walk that descends into it declares every parameter and variable a second time | `symbol` is never descended into |
 
 `DocumentIndex` carries one piece of information the compiler does not have: a

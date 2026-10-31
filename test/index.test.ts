@@ -32,6 +32,7 @@ import {
 	positionIn,
 	references,
 	rename,
+	signatureHelp,
 	type IndexedDocument,
 } from '../server/features';
 import type { AnalysisRequest, DocumentIndex } from '../src/common/types';
@@ -435,6 +436,73 @@ describe('completion', () => {
 		const offset = SOURCE.indexOf('\tint s = total');
 		const labels = new Set(complete(document, positionIn(SOURCE, offset)).map(item => item.label));
 		assert.ok(!labels.has('x'), 'a field was offered as a top-level name');
+	});
+});
+
+describe('signature help', () => {
+	const CALLS = `int add(int a, int b) {
+	return a + b;
+}
+
+int add(int a) {
+	return a;
+}
+
+int main() {
+	print("x");
+	return add(add(1, 2), 3);
+}
+`;
+
+	let calls: IndexedDocument;
+
+	before(async () => {
+		const response = await analyse(request(CALLS), host);
+		assert.deepEqual(
+			response.diagnostics.map(diagnostic => diagnostic.message),
+			[],
+			'the signature-help fixture must compile cleanly'
+		);
+		assert.ok(response.index, 'no index for the signature-help fixture');
+		calls = { uri: URI, index: response.index, text: CALLS };
+	});
+
+	/** The position just after `needle`. */
+	const inside = (needle: string) => positionIn(CALLS, CALLS.indexOf(needle) + needle.length);
+
+	it('names the parameters and tracks the argument the cursor is in', () => {
+		const help = signatureHelp(calls, inside('add(add(1, 2), '));
+		assert.ok(help, 'no help in the outer call');
+		const active = help.signatures[help.activeSignature];
+		assert.equal(active.label, 'int add(int a, int b)');
+		assert.equal(help.activeParameter, 1);
+	});
+
+	it('picks the innermost call rather than the one around it', () => {
+		const help = signatureHelp(calls, inside('add(add(1, '));
+		assert.ok(help, 'no help in the inner call');
+		assert.equal(help.signatures[help.activeSignature].label, 'int add(int a, int b)');
+		assert.equal(help.activeParameter, 1);
+	});
+
+	it('offers every overload', () => {
+		const help = signatureHelp(calls, inside('add(add(1, 2), '));
+		assert.ok(help);
+		assert.deepEqual(
+			help.signatures.map(signature => signature.label).sort(),
+			['int add(int a)', 'int add(int a, int b)']
+		);
+	});
+
+	it('answers a builtin from the generated tables', () => {
+		const help = signatureHelp(calls, inside('print('));
+		assert.ok(help, 'no help for a builtin');
+		assert.equal(help.signatures[0].label, 'void print(…)');
+		assert.equal(help.activeParameter, 0);
+	});
+
+	it('is null when the cursor is not inside a call', () => {
+		assert.equal(signatureHelp(calls, positionIn(CALLS, CALLS.indexOf('int add'))), null);
 	});
 });
 

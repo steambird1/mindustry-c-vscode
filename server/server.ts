@@ -44,6 +44,7 @@ import {
 	outline,
 	references,
 	rename,
+	signatureHelp,
 	type CompletionItem,
 	type IndexedDocument,
 } from './features';
@@ -142,6 +143,7 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
 			referencesProvider: true,
 			renameProvider: { prepareProvider: true },
 			completionProvider: { triggerCharacters: ['.', '@'], resolveProvider: false },
+			signatureHelpProvider: { triggerCharacters: ['(', ','] },
 			documentSymbolProvider: true,
 		},
 	};
@@ -497,6 +499,16 @@ connection.onCompletion(params => {
 		isIncomplete: true,
 		items: complete(current, params.position).map(toLspCompletion),
 	};
+});
+
+connection.onSignatureHelp(params => {
+	// Same reason as completion: the call is being typed, so the index is one
+	// version behind. The text must be current, because the call is found in it.
+	const entry = indexed(params.textDocument.uri, { allowStale: true });
+	if (!entry) return null;
+	const document = documents.get(params.textDocument.uri);
+	const current = document ? { ...entry, text: document.getText() } : entry;
+	return signatureHelp(current, params.position);
 });
 
 connection.onDocumentSymbol(params => {

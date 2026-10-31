@@ -600,6 +600,218 @@ function generalCompletions(document: IndexedDocument): CompletionItem[] {
 }
 
 /* ------------------------------------------------------------------ *
+ * Signature help
+ * ------------------------------------------------------------------ */
+
+export interface SignatureParameter {
+	/** Offsets into the signature's label. */
+	label: [number, number];
+}
+
+export interface Signature {
+	label: string;
+	parameters: SignatureParameter[];
+}
+
+export interface SignatureHelp {
+	signatures: Signature[];
+	activeSignature: number;
+	activeParameter: number;
+}
+
+/**
+ * The call the cursor is inside, if any.
+ *
+ * Read from the text rather than from the AST: signature help is asked for
+ * while the file is mid-edit, when the last analysed AST may not contain the
+ * call at all. The scan starts at the top of the file so comments and literals
+ * can be skipped; it is linear in the file size, which is fine for a request
+ * triggered by `(` or `,`.
+ */
+export function signatureHelp(document: IndexedDocument, position: Position): SignatureHelp | null {
+	const offset = offsetOf(document.text, position);
+	const call = callAt(document.text, offset);
+	if (!call) return null;
+
+	const signatures: Signature[] = [];
+	const seen = new Set<string>();
+	for (const symbol of document.index.symbols) {
+		if (symbol.kind !== 'function' || symbol.name !== call.name) continue;
+		const signature = functionSignature(symbol);
+		if (seen.has(signature.label)) continue;
+		seen.add(signature.label);
+		signatures.push(signature);
+	}
+
+	// A builtin is only consulted when the user has not declared the name; a
+	// local declaration shadows it, and offering both would be a guess.
+	if (signatures.length === 0) {
+		const builtin = builtinSignature(call.name);
+		if (builtin) signatures.push(builtin);
+	}
+	if (signatures.length === 0) return null;
+
+	const argument = argumentIndex(document.text, call.open, offset);
+	const activeSignature = chooseSignature(signatures, argument + 1);
+	const parameters = signatures[activeSignature].parameters;
+	return {
+		signatures,
+		activeSignature,
+		// `argument` can run past the list while the user is mid-edit; pointing
+		// at the last parameter is more useful than pointing at nothing.
+		activeParameter: Math.min(argument, Math.max(0, parameters.length - 1)),
+	};
+}
+
+function callAt(text: string, offset: number): { name: string; open: number } | null {
+	const parens: number[] = [];
+	scanCode(text, 0, offset, (character, index) => {
+		if (character === '(') parens.push(index);
+		else if (character === ')') parens.pop();
+		// A call cannot span a statement boundary, so a stray `(` further up is
+		// not the one the cursor belongs to.
+		else if (character === ';') parens.length = 0;
+	});
+
+	const open = parens[parens.length - 1];
+	if (open === undefined) return null;
+
+	let end = open;
+	while (end > 0 && /\s/.test(text[end - 1])) end--;
+	let start = end;
+	while (start > 0 && /[A-Za-z0-9_]/.test(text[start - 1])) start--;
+	if (start === end) return null;
+	const name = text.slice(start, end);
+	return /^[A-Za-z_]\w*$/.test(name) ? { name, open } : null;
+}
+
+/** Which argument the cursor is in, counting only commas at the call's level. */
+function argumentIndex(text: string, open: number, offset: number): number {
+	let depth = 0;
+	let count = 0;
+	scanCode(text, open + 1, offset, character => {
+		if (character === '(' || character === '[' || character === '{') depth++;
+		else if (character === ')' || character === ']' || character === '}') depth = Math.max(0, depth - 1);
+		else if (character === ',' && depth === 0) count++;
+	});
+	return count;
+}
+
+/**
+ * Walk `text` from `from` to `to`, calling `visit` for code only.
+ *
+ * Comments, string literals and character literals are skipped, so a `(`
+ * inside `print("(")` is not mistaken for a call.
+ */
+function scanCode(
+	text: string,
+	from: number,
+	to: number,
+	visit: (character: string, index: number) => void
+): void {
+	let lineComment = false;
+	let blockComment = false;
+	let quote: '"' | "'" | null = null;
+	let escaped = false;
+
+	for (let index = from; index < to && index < text.length; index++) {
+		const character = text[index];
+		if (lineComment) {
+			if (character === '\n') lineComment = false;
+			continue;
+		}
+		if (blockComment) {
+			if (character === '*' && text[index + 1] === '/') {
+				blockComment = false;
+				index++;
+			}
+			continue;
+		}
+		if (quote) {
+			if (escaped) escaped = false;
+			else if (character === '\\') escaped = true;
+			else if (character === quote) quote = null;
+			continue;
+		}
+		if (character === '/' && text[index + 1] === '/') {
+			lineComment = true;
+			index++;
+			continue;
+		}
+		if (character === '/' && text[index + 1] === '*') {
+			blockComment = true;
+			index++;
+			continue;
+		}
+		if (character === '"' || character === "'") {
+			quote = character;
+			continue;
+		}
+		visit(character, index);
+	}
+}
+
+/** A user function's signature, with its parameter names. */
+function functionSignature(symbol: SymbolInfo): Signature {
+	const match = /^([^()]*)\(([^()]*)\)$/.exec(symbol.type);
+	const returnType = match ? match[1].trim() : '?';
+	const declared = symbol.parameters;
+	if (!declared) {
+		// No parameter list in the index: an old worker, or a type this cannot
+		// split. The rendered type is still a usable label.
+		return { label: signatureOf(symbol), parameters: [] };
+	}
+
+	let label = `${returnType} ${symbol.name}(`;
+	const parameters: SignatureParameter[] = [];
+	declared.forEach((parameter, index) => {
+		if (index > 0) label += ', ';
+		const text = parameter.name ? `${parameter.type} ${parameter.name}` : parameter.type;
+		const start = label.length;
+		label += text;
+		parameters.push({ label: [start, label.length] });
+	});
+	label += ')';
+	return { label, parameters };
+}
+
+/** `void printflush(device)` from the generated tables, with parameter ranges. */
+function builtinSignature(name: string): Signature | null {
+	const label = BUILTIN_SIGNATURES[name];
+	if (!label) return null;
+	const open = label.indexOf('(');
+	const close = label.lastIndexOf(')');
+	if (open < 0 || close < open) return null;
+
+	const parameters: SignatureParameter[] = [];
+	let cursor = open + 1;
+	for (const part of label.slice(open + 1, close).split(',')) {
+		const text = part.trim();
+		if (!text) continue;
+		const start = label.indexOf(text, cursor);
+		if (start < 0) continue;
+		parameters.push({ label: [start, start + text.length] });
+		cursor = start + text.length;
+	}
+	return { label, parameters };
+}
+
+/**
+ * Which overload the cursor is in.
+ *
+ * An exact arity wins; otherwise the richest one, so an argument list that
+ * already has more arguments than any overload still highlights something.
+ */
+function chooseSignature(signatures: Signature[], argumentCount: number): number {
+	let richest = 0;
+	for (let index = 0; index < signatures.length; index++) {
+		if (signatures[index].parameters.length === argumentCount) return index;
+		if (signatures[index].parameters.length > signatures[richest].parameters.length) richest = index;
+	}
+	return richest;
+}
+
+/* ------------------------------------------------------------------ *
  * Document symbols (outline)
  * ------------------------------------------------------------------ */
 
