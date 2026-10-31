@@ -69,6 +69,28 @@ if (BUILTIN_FUNCTIONS.length < 20) {
 	process.exit(1);
 }
 
+/*
+ * `@this`, `@time`, ... live in `SemanticAnalyzer`'s `specialTypes` map, keyed
+ * by their sigil. This used to be a hand-kept list in generatedTables.ts, and
+ * it had already drifted -- `@unit` was missing.
+ */
+const processorBlock = semanticSource.match(/specialTypes\s*=\s*\{([\s\S]*?)\n\s*\};/);
+if (!processorBlock) {
+	console.error('Could not find specialTypes in mindcSemantic.js');
+	process.exit(1);
+}
+const PROCESSOR_VARIABLES = [
+	...new Set(
+		[...processorBlock[1].matchAll(/'@([A-Za-z_]\w*)'\s*:/g)].map(match => match[1])
+	),
+].sort();
+if (PROCESSOR_VARIABLES.length < 10) {
+	console.error(
+		`Only found ${PROCESSOR_VARIABLES.length} processor variables; the compiler's table probably moved.`
+	);
+	process.exit(1);
+}
+
 /* ------------------------------------------------------------------ *
  * 1. Vocabulary
  * ------------------------------------------------------------------ */
@@ -396,6 +418,7 @@ const tables = {
 	instructions: INSTRUCTION_LIST.sort(),
 	builtinFunctions: BUILTIN_FUNCTIONS,
 	builtinSignatures: BUILTIN_SIGNATURES,
+	processorVariables: PROCESSOR_VARIABLES,
 	extraTypes: EXTRA_TYPES.sort(),
 	operators: Object.keys(OPERATORS).sort(),
 	punctuators: Object.keys(PUNCTUATORS).sort(),

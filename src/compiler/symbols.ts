@@ -412,6 +412,8 @@ interface WalkState {
 	memberDeclarations: Map<string, MemberDeclaration>;
 	/** Resolved struct types, keyed by the struct's own name. */
 	structTypes: Map<string, TypeInfo>;
+	/** Named types (structs, unions, typedefs), for uses of a custom type. */
+	typeSymbols: Map<string, SymbolInfo>;
 	/** Declarations the type pre-pass has already recorded. */
 	claimed: WeakSet<object>;
 }
@@ -424,6 +426,7 @@ export function buildDocumentIndex(input: IndexInput): DocumentIndex {
 		structs: [],
 		memberDeclarations: new Map(),
 		structTypes: new Map(),
+		typeSymbols: new Map(),
 		claimed: new WeakSet(),
 	};
 
@@ -506,6 +509,7 @@ function collectStruct(
 		isDeclaration: true,
 		target: symbol,
 	});
+	state.typeSymbols.set(name, symbol);
 
 	// The analyser resolves the struct's own type into the program scope, which
 	// gives every member a rendered type without reading the declaration back.
@@ -671,6 +675,7 @@ function collectTypedef(
 			isDeclaration: true,
 			target: symbol,
 		});
+		state.typeSymbols.set(name, symbol);
 	}
 }
 
@@ -720,8 +725,6 @@ function walk(
 		//     location as the node it was resolved from, so walking it would
 		//     declare every parameter and variable a second time;
 		//   - `dataType` is a resolved type, and nothing under it is source;
-		//   - `type` is a type specifier node on struct members, where it holds
-		//     the member's type rather than its node type;
 		//   - `typeDefinitions` is already done by the type pre-pass.
 		if (SKIPPED_KEYS.has(key)) continue;
 		if (key === 'typeDefinitions' && Array.isArray(value)) {
@@ -736,7 +739,7 @@ function walk(
 	}
 }
 
-const SKIPPED_KEYS = new Set(['parent', 'scope', 'location', 'symbol', 'dataType', 'type']);
+const SKIPPED_KEYS = new Set(['parent', 'scope', 'location', 'symbol', 'dataType']);
 
 function visit(
 	node: AstNode,
@@ -754,6 +757,14 @@ function visit(
 	const name = asName(node.name);
 	const symbol = resolveSymbol(node, name, scope);
 	const local = inFunction ? ('local' as const) : ('file' as const);
+
+	// A type specifier is a use of a type name, not a declaration: `myint x;`,
+	// `struct point *p`, a parameter's type. The analyser resolves the type but
+	// leaves the node without a symbol, so it is linked through the pre-pass.
+	if (type === 'TypeSpecifier') {
+		visitTypeSpecifier(node, path, texts, state);
+		return;
+	}
 
 	/* -- declarations ------------------------------------------------ */
 
@@ -850,6 +861,56 @@ function visit(
 			target,
 		});
 	}
+}
+
+/**
+ * A use of a named type: `myint x;`, `struct point *p`, a parameter's type.
+ *
+ * The analyser resolves the type but leaves the specifier node without a
+ * symbol, and a typedef's name is not in the program scope at all, so the link
+ * back to the declaration comes from the pre-pass's `typeSymbols` map. Without
+ * this, custom types only lit up at their declaration.
+ */
+function visitTypeSpecifier(
+	node: AstNode,
+	path: string | null,
+	texts: FileText,
+	state: WalkState
+): void {
+	const location = node.location;
+	const typeName = asName(node.typeName);
+	if (!location || !path || !typeName) return;
+	const start = texts.offset(path, location.line, location.column, location.index);
+
+	if (typeName === 'struct' || typeName === 'union' || typeName === 'enum') {
+		// The specifier records only the keyword; the tag is the next word.
+		const match = /^(?:struct|union|enum)\s+([A-Za-z_]\w*)/.exec(
+			texts.text(path).slice(start, start + 256)
+		);
+		if (!match) return;
+		const tag = match[1];
+		const symbol = state.typeSymbols.get(tag);
+		if (!symbol) return;
+		const offset = start + match[0].length - tag.length;
+		state.references.push({
+			path,
+			range: texts.range(path, offset, tag.length),
+			offset,
+			isDeclaration: false,
+			target: symbol,
+		});
+		return;
+	}
+
+	const symbol = state.typeSymbols.get(typeName);
+	if (!symbol) return;
+	state.references.push({
+		path,
+		range: texts.range(path, start, typeName.length),
+		offset: start,
+		isDeclaration: false,
+		target: symbol,
+	});
 }
 
 /** Where a declaration's name is written, or -1 if the text is not available. */

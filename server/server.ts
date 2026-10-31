@@ -588,9 +588,12 @@ function toLspCompletion(item: CompletionItem): LspCompletionItem {
 		detail: item.detail,
 		documentation: item.documentation,
 		sortText: item.sortText,
+		...(item.filterText ? { filterText: item.filterText } : {}),
 		// An explicit edit wins over the client's own word replacement, which is
 		// what makes `@copper` replace the half-typed name and not the sigil too.
-		...(item.range ? { textEdit: { range: item.range, newText: item.label } } : {}),
+		...(item.range
+			? { textEdit: { range: item.range, newText: item.insertText ?? item.label } }
+			: {}),
 	};
 }
 

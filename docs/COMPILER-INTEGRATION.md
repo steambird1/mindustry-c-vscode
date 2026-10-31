@@ -199,6 +199,11 @@ function that declares it) and a function's `parameters`. Completion uses
 so the function is the finest granularity available — and signature help uses
 `parameters` for the names, since `type` alone renders `int(int, int)`.
 
+The type pre-pass also keeps a map of named types. A `TypeSpecifier` node has
+no symbol and a typedef is not in the program scope, so a `myint` or
+`struct point` use is linked back to its declaration through that map; without
+it, a custom type only lit up where it was declared.
+
 ### Checking these claims against the compiler
 
 Every row in that table came from running the compiler, not from reading it. The

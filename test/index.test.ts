@@ -456,6 +456,20 @@ int second(int beta) {
 		assert.ok(!labels.has('alpha'), 'another function`s local leaked into the list');
 	});
 
+	it('keeps the sigil out of the inserted text and filters on the bare name', () => {
+		// The fixture has `content_t ore = @copper;`; ask just after `@co`.
+		const items = complete(document, positionIn(SOURCE, SOURCE.indexOf('@copper') + 3));
+		const copper = items.find(item => item.label === '@copper');
+		assert.ok(copper, 'no @copper completion');
+		assert.equal(copper.insertText, 'copper', 'inserting the label would leave @@copper');
+		assert.equal(copper.filterText, 'copper', 'the client filters on `co`, not `@co`');
+
+		assert.ok(
+			items.some(item => item.label === '@unit'),
+			'@unit is missing from the processor variables'
+		);
+	});
+
 	it('does not offer a struct field as a bare name', () => {
 		// `x` is only nameable through an object, so offering it bare would
 		// suggest source that does not compile.
@@ -607,6 +621,27 @@ describe('semantic tokens', () => {
 		const member = at(tokens, SOURCE.indexOf('p.x = 1') + 2);
 		assert.equal(member?.type, 4);
 		assert.equal(member?.modifiers, 0, 'a use was marked as a declaration');
+	});
+
+	it('paints a custom type at its uses, not only at its declaration', async () => {
+		const CUSTOM = `typedef int myint;
+struct point { int x; };
+myint a;
+struct point p;
+int main(void) { return a; }
+`;
+		const response = await analyse(request(CUSTOM), host);
+		assert.ok(response.index, 'no index for the custom-type fixture');
+		const custom: IndexedDocument = { uri: URI, index: response.index, text: CUSTOM, mainPath: PATH };
+		const tokens = decode(semanticTokens(custom));
+
+		const tokenAt = (needle: string, delta = 0) => {
+			const position = positionIn(CUSTOM, CUSTOM.indexOf(needle) + delta);
+			return tokens.find(token => token.line === position.line && token.character === position.character);
+		};
+
+		assert.equal(tokenAt('myint a;')?.type, 3, 'the typedef use is not a type');
+		assert.equal(tokenAt('struct point p;', 'struct '.length)?.type, 3, 'the struct tag use is not a type');
 	});
 });
 

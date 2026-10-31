@@ -442,7 +442,21 @@ export interface CompletionItem {
 	documentation?: string;
 	/** Replace only this, rather than the word at the cursor. */
 	range?: Range;
-	/** Replace only what was typed, for `@` and `.` completions. */
+	/**
+	 * Text actually inserted, when it differs from `label`.
+	 *
+	 * The `@` items are labelled with the sigil but replace only the half-typed
+	 * name after it, so the sigil itself is not duplicated.
+	 */
+	insertText?: string;
+	/**
+	 * What the client matches the typed prefix against.
+	 *
+	 * VS Code's word pattern treats `@` as a separator, so for `@co` the prefix
+	 * is `co`; a label of `@copper` would be filtered out without this.
+	 */
+	filterText?: string;
+	/** Sort key, so categories and the user's own names group predictably. */
 	sortText?: string;
 }
 
@@ -535,9 +549,14 @@ function constantCompletions(document: IndexedDocument, position: Position): Com
 	const items: CompletionItem[] = [];
 	for (const category of CONTENT_CATEGORIES) {
 		for (const name of CONTENT_NAMES[category] ?? []) {
+			// The table entries carry the sigil; the text at the cursor does not
+			// (the `@` is already there), so it is dropped from the edit and the
+			// filter text while the label keeps it.
+			const bare = name.replace(/^@/, '');
 			items.push({
-				// The table entries already carry the sigil.
 				label: name,
+				insertText: bare,
+				filterText: bare,
 				kind: 'constant',
 				detail: category,
 				range,
@@ -549,6 +568,8 @@ function constantCompletions(document: IndexedDocument, position: Position): Com
 	for (const name of PROCESSOR_VARIABLES) {
 		items.push({
 			label: `@${name}`,
+			insertText: name,
+			filterText: name,
 			kind: 'constant',
 			detail: 'processor',
 			range,

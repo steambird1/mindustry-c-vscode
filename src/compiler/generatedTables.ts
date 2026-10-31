@@ -16,6 +16,7 @@ interface Tables {
 	instructions: string[];
 	builtinFunctions: string[];
 	builtinSignatures: Record<string, string>;
+	processorVariables: string[];
 	extraTypes: string[];
 	operators: string[];
 	punctuators: string[];
@@ -50,36 +51,7 @@ export const CONTENT_NAMES: Readonly<Record<ContentCategory, readonly string[]>>
 export const CONTENT_CATEGORIES: readonly ContentCategory[] = ['item', 'liquid', 'unit', 'block'];
 
 /** The processor's own `@variables`, which are not content ids. */
-export const PROCESSOR_VARIABLES: readonly string[] = [
-	'this',
-	'thisx',
-	'thisy',
-	'links',
-	'ipt',
-	'pi',
-	'e',
-	'degToRad',
-	'radToDeg',
-	'time',
-	'tick',
-	'second',
-	'minute',
-	'waveNumber',
-	'waveTime',
-	'mapw',
-	'maph',
-	'server',
-	'client',
-	'clientLocale',
-	'clientName',
-	'clientTeam',
-	'clientUnit',
-	'clientMobile',
-	'blockCount',
-	'unitCount',
-	'itemCount',
-	'liquidCount',
-];
+export const PROCESSOR_VARIABLES: readonly string[] = tables.processorVariables;
 
 /** Type keywords, for `storage.type` colouring and completion. */
 export const TYPE_KEYWORDS: readonly string[] = [

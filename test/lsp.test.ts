@@ -44,6 +44,8 @@ const INCLUDE_MAIN = 'file:///c%3A/project/include-main.mlgc';
 const INCLUDE_OTHER = 'file:///c%3A/project/other-main.mlgc';
 /** A file whose only mistake is an undeclared processor block. */
 const MESSAGE_DOC = 'file:///c%3A/project/message.mlgc';
+/** A half-typed content id. */
+const AT_DOC = 'file:///c%3A/project/at.mlgc';
 
 const BROKEN = 'int main(void) {\n    return thisDoesNotExist;\n}\n';
 
@@ -390,6 +392,31 @@ describe('the language server, over the wire', () => {
 		assert.deepEqual(result.data.slice(0, 5), [1, 4, 4, 2, 1]);
 	});
 
+	it('completes a content id without duplicating the sigil', async () => {
+		open(AT_DOC, 'mlgc', 'int main(void) {\n    content_t x = @co;\n    return 0;\n}\n');
+		await client.waitForPublish(AT_DOC, 20000);
+
+		const result = await client.request('textDocument/completion', {
+			textDocument: { uri: AT_DOC },
+			position: { line: 1, character: 21 },
+			context: { triggerKind: 2, triggerCharacter: '@' },
+		});
+		const items = (Array.isArray(result) ? result : result?.items ?? []) as Array<{
+			label: string;
+			filterText?: string;
+			textEdit?: { newText: string };
+		}>;
+		const copper = items.find(item => item.label === '@copper');
+
+		assert.ok(copper, 'no @copper completion');
+		// VS Code's word at the cursor is `co` (the `@` is a separator), so the
+		// label would be filtered out without this.
+		assert.equal(copper.filterText, 'copper');
+		// The `@` is already in the text; replacing the whole label would leave
+		// `@@copper`.
+		assert.equal(copper.textEdit?.newText, 'copper');
+	});
+
 	it('never publishes a finding under a uri that is not a document', () => {
 		const known = new Set([
 			CANONICAL,
@@ -398,6 +425,7 @@ describe('the language server, over the wire', () => {
 			INCLUDE_MAIN,
 			INCLUDE_OTHER,
 			MESSAGE_DOC,
+			AT_DOC,
 		]);
 		const stray = client.published.filter(entry => entry.count > 0 && !known.has(entry.uri));
 		assert.deepEqual(stray, [], 'a finding was attributed to something the editor does not have');
