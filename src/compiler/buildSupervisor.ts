@@ -46,15 +46,19 @@ export class BuildWorkerHost {
 		}
 	}
 
-	/** Start a build, cancelling any build already running. */
+	/** Start a build, terminating any build already running. */
 	start(request: Omit<BuildRequest, 'id'>): number {
+		// A running compile cannot be interrupted from inside the thread: the
+		// optimiser is synchronous, so a cancel message would only be read after
+		// it finished. Terminating the thread is the only real cancellation --
+		// the same thing the compiler's browser UI does.
+		if (this.inFlight !== null) this.terminate();
 		const worker = this.spawn();
 		if (!worker) {
 			const message = 'The Mindustry-C build worker is unavailable.';
 			this.options.onCrash?.(message);
 			return -1;
 		}
-		if (this.inFlight !== null) worker.postMessage({ type: 'cancel', id: this.inFlight });
 		const id = this.nextId++;
 		this.inFlight = id;
 		worker.postMessage({ ...request, id } satisfies BuildRequest);
@@ -62,9 +66,23 @@ export class BuildWorkerHost {
 	}
 
 	cancel(): void {
-		if (this.inFlight === null || !this.worker) return;
-		this.worker.postMessage({ type: 'cancel', id: this.inFlight });
+		if (this.inFlight === null) return;
 		this.inFlight = null;
+		this.terminate();
+	}
+
+	/**
+	 * Stop the thread now.
+	 *
+	 * `worker` is cleared before `terminate()` resolves, and every handler
+	 * compares the instance it belongs to with `this.worker`, so a deliberate
+	 * stop cannot be reported as a crash and `spawn()` can start the replacement
+	 * while the old thread is still shutting down.
+	 */
+	private terminate(): void {
+		const worker = this.worker;
+		this.worker = null;
+		if (worker) void worker.terminate();
 	}
 
 	private spawn(): Worker | null {
@@ -74,12 +92,17 @@ export class BuildWorkerHost {
 				workerData: { knownPaths: this.knownPaths },
 			});
 			worker.on('message', (response: BuildResponse) => {
+				if (this.worker !== worker) return;
 				if (this.inFlight === null || response.id < this.inFlight) return;
 				this.inFlight = null;
 				this.options.onResult(response);
 			});
-			worker.on('error', error => this.died(error.stack ?? error.message));
+			worker.on('error', error => {
+				if (this.worker !== worker) return;
+				this.died(error.stack ?? error.message);
+			});
 			worker.on('exit', code => {
+				if (this.worker !== worker) return;
 				if (code !== 0) this.died(`the build thread exited with code ${code}`);
 			});
 			this.worker = worker;
@@ -97,9 +120,9 @@ export class BuildWorkerHost {
 	}
 
 	async dispose(): Promise<void> {
+		this.inFlight = null;
 		const worker = this.worker;
 		this.worker = null;
-		this.inFlight = null;
 		if (worker) await worker.terminate();
 	}
 }

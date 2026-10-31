@@ -248,6 +248,9 @@ class BuildService implements vscode.Disposable {
 		if (!this.activeUri) return;
 		this.cancelled = true;
 		this.worker.cancel();
+		// The worker is terminated rather than asked nicely, so no result will
+		// arrive to remove this build's entry.
+		this.pending.clear();
 		this.status?.hide();
 		this.output.info('Build cancelled.');
 	}
@@ -312,6 +315,9 @@ class BuildService implements vscode.Disposable {
 			config: effective,
 		};
 		this.worker.setKnownDocuments(this.openBuffers());
+		// Starting a build terminates one that is still running; its entry will
+		// never be answered.
+		this.pending.clear();
 		const id = this.worker.start(request);
 		if (id < 0) {
 			this.status?.hide();

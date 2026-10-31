@@ -314,7 +314,15 @@ becomes a problem.
 
 The analysis worker snapshots the compiler on every request, so an analyser
 crash can only ever affect the worker; the supervisor respawns it. Builds run in
-a separate, cancellable worker, and exactly one build runs at a time.
+a separate worker, exactly one at a time, and are cancelled by terminating that
+worker.
+
+The compiler has no cancellation hook and the optimiser is synchronous, so a
+cancel message would only be read after the run it was meant to stop. The
+compiler's own browser UI terminates its worker for the same reason
+(`compileWorker.terminate()`). The host clears its worker reference before
+terminating and checks that reference in the exit handler, so a deliberate stop
+is not reported as a crash, and the next build starts a fresh thread.
 
 What the user sees when a run dies is less obvious than it looks, because a
 crash is not an error: patch 0001 catches it and returns a run with
