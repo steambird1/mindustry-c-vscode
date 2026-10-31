@@ -643,6 +643,39 @@ int main(void) { return a; }
 		assert.equal(tokenAt('myint a;')?.type, 3, 'the typedef use is not a type');
 		assert.equal(tokenAt('struct point p;', 'struct '.length)?.type, 3, 'the struct tag use is not a type');
 	});
+
+	it('highlights macro uses, and ignores the fake location expansion tokens carry', async () => {
+		const MACROS = `#define SIZE 4
+#define SQUARE(x) ((x) * (x))
+int main(void) {
+    int value = 2;
+    return SQUARE(value) + SIZE;
+}
+`;
+		const response = await analyse(request(MACROS), host);
+		assert.ok(response.index, 'no index for the macro fixture');
+		assert.ok(response.index.macros?.includes('SQUARE'), 'macro names did not reach the index');
+
+		const macros: IndexedDocument = { uri: URI, index: response.index, text: MACROS, mainPath: PATH };
+		const tokens = decode(semanticTokens(macros));
+
+		const tokenAt = (needle: string, delta = 0) => {
+			const position = positionIn(MACROS, MACROS.indexOf(needle) + delta);
+			return tokens.find(token => token.line === position.line && token.character === position.character);
+		};
+
+		assert.equal(tokenAt('#define SIZE 4', '#define '.length)?.type, 5, 'the macro definition is not a macro');
+		assert.equal(tokenAt('SQUARE(value)')?.type, 5, 'the function-like macro use is not a macro');
+		assert.equal(tokenAt('+ SIZE;', 2)?.type, 5, 'the object-like macro use is not a macro');
+
+		// Expanded body tokens carry the definition's placeholder location
+		// (line 1, column 1), which used to paint a variable over `#defi`.
+		assert.equal(
+			tokens.some(token => token.line === 0 && token.character === 0),
+			false,
+			'a macro expansion location leaked into the file'
+		);
+	});
 });
 
 describe('outline', () => {

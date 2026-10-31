@@ -79,4 +79,15 @@ describe('the generated grammars', () => {
 		assert.equal(typeof doubleQuoted.end, 'string', 'the string rule has no end');
 		assert.equal(doubleQuoted.match, undefined, 'a `match` here would win and scope only the quote');
 	});
+
+	it('mlgc highlights a whole block comment, not just its opening', () => {
+		const grammar = readGrammar('mlgc.tmLanguage.json');
+		const comments = (repositoryOf(grammar).comments as { patterns?: Rule[] }).patterns ?? [];
+		const blockComment = comments.find(rule => String(rule.name).includes('comment.block'));
+
+		assert.ok(blockComment, 'the grammar has no block comment rule');
+		assert.equal(typeof blockComment.begin, 'string', 'the block comment rule has no begin');
+		assert.equal(typeof blockComment.end, 'string', 'the block comment rule has no end');
+		assert.equal(blockComment.match, undefined, 'a `match` here would win and scope only `/*`');
+	});
 });

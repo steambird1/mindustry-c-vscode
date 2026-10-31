@@ -933,7 +933,14 @@ function declarationInsertionOffset(text: string): number {
  * Semantic tokens
  * ------------------------------------------------------------------ */
 
-export const SEMANTIC_TOKEN_TYPES = ['variable', 'parameter', 'function', 'type', 'property'] as const;
+export const SEMANTIC_TOKEN_TYPES = [
+	'variable',
+	'parameter',
+	'function',
+	'type',
+	'property',
+	'macro',
+] as const;
 export const SEMANTIC_TOKEN_MODIFIERS = ['declaration'] as const;
 
 /**
@@ -974,6 +981,16 @@ export function semanticTokens(document: IndexedDocument): number[] {
 		});
 	}
 
+	// Macro uses never reach the AST: the lexer expands them before parsing, so
+	// there is no reference to paint. The names come from the lexer instead, and
+	// the occurrences are matched in code only -- not in comments or literals.
+	for (const macro of macroOccurrences(document.text, document.index.macros ?? [])) {
+		const key = `${macro.line}:${macro.character}:${macro.character + macro.length}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		tokens.push({ ...macro, type: 5, modifiers: 0 });
+	}
+
 	tokens.sort((a, b) => a.line - b.line || a.character - b.character);
 
 	const data: number[] = [];
@@ -1010,6 +1027,51 @@ function semanticTokenType(symbol: SymbolInfo): number {
 		default:
 			return -1;
 	}
+}
+
+/**
+ * Every use of a macro name in code.
+ *
+ * `scanCode` gives a mask of code characters, so a `#define` line counts (the
+ * name there is a macro too) while comments and string literals do not.
+ */
+function macroOccurrences(
+	text: string,
+	names: readonly string[]
+): Array<{ line: number; character: number; length: number }> {
+	const wanted = new Set(names);
+	if (wanted.size === 0) return [];
+
+	const code = new Uint8Array(text.length);
+	scanCode(text, 0, text.length, (_character, index) => {
+		code[index] = 1;
+	});
+
+	const starts = [0];
+	for (let index = 0; index < text.length; index++) {
+		if (text.charCodeAt(index) === 10) starts.push(index + 1);
+	}
+
+	const occurrences: Array<{ line: number; character: number; length: number }> = [];
+	for (const match of text.matchAll(/[A-Za-z_]\w*/g)) {
+		const offset = match.index ?? 0;
+		if (!code[offset]) continue;
+		if (!wanted.has(match[0])) continue;
+		const { line, character } = positionOfOffset(starts, offset);
+		occurrences.push({ line, character, length: match[0].length });
+	}
+	return occurrences;
+}
+
+function positionOfOffset(starts: number[], offset: number): { line: number; character: number } {
+	let low = 0;
+	let high = starts.length - 1;
+	while (low < high) {
+		const middle = Math.ceil((low + high) / 2);
+		if (starts[middle] <= offset) low = middle;
+		else high = middle - 1;
+	}
+	return { line: low, character: offset - starts[low] };
 }
 
 /* ------------------------------------------------------------------ *

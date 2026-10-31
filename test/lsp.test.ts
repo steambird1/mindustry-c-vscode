@@ -80,6 +80,8 @@ function connect(target: string) {
 	let nextId = 1;
 	const waiting = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
 	const published: Published[] = [];
+	/** Server -> client requests, so a test can wait for a refresh. */
+	const requests: string[] = [];
 
 	child.stderr.on('data', chunk => {
 		stderr += String(chunk);
@@ -94,6 +96,7 @@ function connect(target: string) {
 		// A server->client request. Never leaving one unanswered is the whole
 		// point: `workspace/configuration` can stall everything behind it.
 		if (message.id !== undefined && message.method) {
+			requests.push(message.method);
 			const result =
 				message.method === 'workspace/configuration' ? message.params.items.map(() => ({})) : null;
 			write({ id: message.id, result });
@@ -188,6 +191,24 @@ function connect(target: string) {
 	const waitForPublish = (uri: string, timeoutMs: number): Promise<Published> =>
 		waitForPublished(uri, () => true, 'publish', timeoutMs);
 
+	const countRequests = (method: string): number => requests.filter(entry => entry === method).length;
+
+	/** Wait until the server has sent `method` more than `afterCount` times. */
+	const waitForRequest = (method: string, afterCount: number, timeoutMs: number): Promise<void> => {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(
+				() => reject(new Error(`no ${method} request within ${timeoutMs} ms`)),
+				timeoutMs
+			);
+			const poll = setInterval(() => {
+				if (countRequests(method) <= afterCount) return;
+				clearTimeout(timer);
+				clearInterval(poll);
+				resolve();
+			}, 25);
+		});
+	};
+
 	const close = async (): Promise<void> => {
 		try {
 			await request('shutdown', null);
@@ -207,7 +228,7 @@ function connect(target: string) {
 		});
 	};
 
-	return { child, request, write, published, waitForFinding, waitForPublish, close };
+	return { child, request, write, published, waitForFinding, waitForPublish, countRequests, waitForRequest, close };
 }
 
 describe('the language server, over the wire', () => {
@@ -382,6 +403,9 @@ describe('the language server, over the wire', () => {
 	});
 
 	it('answers semantic tokens for the open document', async () => {
+		const provider = capabilities.semanticTokensProvider as { legend: { tokenTypes: string[] } };
+		assert.ok(provider.legend.tokenTypes.includes('macro'), 'the legend has no macro token type');
+
 		const result = (await client.request('textDocument/semanticTokens/full', {
 			textDocument: { uri: INCLUDE_MAIN },
 		})) as { data: number[] };
@@ -415,6 +439,27 @@ describe('the language server, over the wire', () => {
 		// The `@` is already in the text; replacing the whole label would leave
 		// `@@copper`.
 		assert.equal(copper.textEdit?.newText, 'copper');
+	});
+
+	it('asks the client to refresh semantic tokens once the first analysis lands', async () => {
+		const uri = 'file:///c%3A/project/refresh.mlgc';
+		open(uri, 'mlgc', 'int main(void) { return 0; }\n');
+
+		// Immediately: analysis is still in its debounce window, so there is
+		// nothing to paint and the server says so.
+		const before = await client.request('textDocument/semanticTokens/full', {
+			textDocument: { uri },
+		});
+		assert.deepEqual(before, { data: [] }, 'the fixture was already analysed; the refresh is not exercised');
+
+		// The client will not ask again by itself, so the server has to say when.
+		const seen = client.countRequests('workspace/semanticTokens/refresh');
+		await client.waitForRequest('workspace/semanticTokens/refresh', seen, 20000);
+
+		const after = await client.request('textDocument/semanticTokens/full', {
+			textDocument: { uri },
+		});
+		assert.ok(after.data.length > 0, 'tokens are still empty after the refresh');
 	});
 
 	it('never publishes a finding under a uri that is not a document', () => {

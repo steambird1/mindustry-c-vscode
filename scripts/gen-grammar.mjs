@@ -207,11 +207,13 @@ const mlgcGrammar = {
 		comments: {
 			patterns: [
 				rule('comment.line.double-slash.mlgc', '//.*$'),
-				rule(
-					'comment.block.mlgc',
-					'/\\*',
-					{ name: 'comment.block.mlgc', begin: '/\\*', end: '\\*/' }
-				),
+				// A `match` here would scope only the opening `/*`; the block has to
+				// run to `*/` so the whole comment -- across lines -- stays comment.
+				{
+					name: 'comment.block.mlgc',
+					begin: '/\\*',
+					end: '\\*/',
+				},
 			],
 		},
 		directives: {

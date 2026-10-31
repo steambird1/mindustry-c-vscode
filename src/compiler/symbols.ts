@@ -134,6 +134,8 @@ export interface IndexInput {
 	sources?: Map<string, string>;
 	/** Files pulled in by #include, for watching. */
 	includes?: string[];
+	/** Macro names the lexer defined, for highlighting their uses. */
+	macros?: string[];
 	/** Set when analysis blew up, so the caller can show it once. */
 	internalError?: string;
 }
@@ -446,6 +448,7 @@ export function buildDocumentIndex(input: IndexInput): DocumentIndex {
 		symbols: state.symbols,
 		structs: state.structs,
 		includes: input.includes ?? [],
+		macros: input.macros ?? [],
 		...(input.internalError ? { internalError: input.internalError } : {}),
 	};
 }
@@ -841,6 +844,11 @@ function visit(
 	if (type === 'Identifier' || type === 'FunctionCall') {
 		if (!name || name.startsWith('@')) return;
 		const offset = texts.offset(path ?? '', location.line, location.column, location.index);
+		// A token from a macro expansion keeps the location it had in the
+		// definition -- often line 1, column 1 -- so the text at that offset is
+		// not the token's name. Recording it would paint or rename a random part
+		// of the `#define` line.
+		if (texts.text(path ?? '').slice(offset, offset + name.length) !== name) return;
 		const target = symbol
 			? describe(
 					symbol,
@@ -904,6 +912,7 @@ function visitTypeSpecifier(
 
 	const symbol = state.typeSymbols.get(typeName);
 	if (!symbol) return;
+	if (texts.text(path).slice(start, start + typeName.length) !== typeName) return;
 	state.references.push({
 		path,
 		range: texts.range(path, start, typeName.length),

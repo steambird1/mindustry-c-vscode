@@ -83,6 +83,15 @@ let effectiveConfig: EffectiveConfig | null = null;
 
 const indexes = new Map<string, IndexedDocument>();
 const pendingTimers = new Map<string, NodeJS.Timeout>();
+/**
+ * Documents whose semantic tokens were asked for before an index existed.
+ *
+ * The client requests them immediately on `didOpen`, while analysis is still in
+ * its debounce window; returning empty is right, but the client does not ask
+ * again on its own -- only an edit or a theme change re-triggers it. So the
+ * publish below asks for a refresh once the index is there.
+ */
+const semanticRefreshPending = new Set<string>();
 let worker: AnalysisWorkerHost | null = null;
 let watchedDirectories = new Set<string>();
 let watcherRegistered = false;
@@ -317,6 +326,11 @@ function publish(response: AnalysisResponse): void {
 			text: document.getText(),
 			mainPath: fromUri(response.uri),
 		});
+		if (semanticRefreshPending.delete(response.uri)) {
+			// `refresh()` returns a promise at run time although its type says
+			// void, and a client without refresh support rejects it.
+			void Promise.resolve(connection.languages.semanticTokens.refresh()).catch(() => {});
+		}
 		if (settings.diagnostics.openIncludes) void watchIncludes(response.index.includes);
 	}
 
@@ -544,9 +558,13 @@ connection.onCodeAction(params => {
 connection.onRequest('textDocument/semanticTokens/full', (params: { textDocument: { uri: string } }) => {
 	// Strict, unlike completion: a stale index would paint the previous text's
 	// ranges onto the current one. An empty answer leaves TextMate in charge
-	// until the next analysis lands.
+	// until the next analysis lands -- and `publish` then asks the client to ask
+	// again, because it will not do so by itself.
 	const entry = indexed(params.textDocument.uri);
-	if (!entry) return { data: [] };
+	if (!entry) {
+		semanticRefreshPending.add(params.textDocument.uri);
+		return { data: [] };
+	}
 	const document = documents.get(params.textDocument.uri);
 	const current = document ? { ...entry, text: document.getText() } : entry;
 	return { data: semanticTokens(current) };

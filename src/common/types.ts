@@ -217,6 +217,8 @@ export interface DocumentIndex {
 	structs: StructInfo[];
 	/** Files pulled in by #include, so the server can watch them. */
 	includes: string[];
+	/** Macro names the lexer defined, so their uses can be highlighted. */
+	macros?: string[];
 	/** Set when analysis failed outright (a compiler crash). */
 	internalError?: string;
 }

@@ -187,6 +187,7 @@ compiler changes one of these, this is the list to re-check.
 | A parameter node has a `name` and a `location` but **no `symbol`** | Only the function's `Scope` can resolve it | The walk threads the nearest enclosing `Scope` down and resolves untyped named nodes through it |
 | A parameter's `type` is a `TypeSpecifier`, and for `struct point` it holds only `struct` | Rendering the specifier gives `struct p`, losing the struct's name; the resolved `dataType` is not attached to parameters | Signature help reads the declared type from the source between the parameter's location and its name; the specifier is only the fallback for an untitled buffer |
 | Every node's `symbol` field is a flat `SymbolEntry` carrying the **same** name and location as the node it was resolved from | A walk that descends into it declares every parameter and variable a second time | `symbol` is never descended into |
+| A token produced by macro expansion keeps a placeholder location from the definition (often line 1, column 1) | A reference built from it points at `#define` or the first character of the file, and can paint or rename unrelated text | A reference is kept only when the source at its offset actually spells the token's name |
 
 `DocumentIndex` carries one piece of information the compiler does not have: a
 field records the struct that declares it (`SymbolInfo.container`). Without it,
@@ -203,6 +204,19 @@ The type pre-pass also keeps a map of named types. A `TypeSpecifier` node has
 no symbol and a typedef is not in the program scope, so a `myint` or
 `struct point` use is linked back to its declaration through that map; without
 it, a custom type only lit up where it was declared.
+
+`#define` is the lexer's business: macros are expanded before parsing, so a use
+has no AST node at all. `DocumentIndex.macros` carries the names the lexer
+ended up with, and semantic tokens match their occurrences in code (comments and
+literals excluded) to paint them. The expansion tokens themselves are not
+trustworthy for positions, which is why a reference is guarded by the source
+text at its offset.
+
+Semantic tokens are answered only from a current index. The client asks
+immediately on open, while analysis is still inside its debounce window, and
+does not ask again on its own -- so the server remembers such a document and
+sends `workspace/semanticTokens/refresh` when the index lands. Without that, a
+file keeps its plain TextMate colours until the next edit or theme change.
 
 ### Checking these claims against the compiler
 

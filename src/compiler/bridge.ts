@@ -73,6 +73,8 @@ export interface LexerLike {
 	tokenize(): Promise<{ tokens: TokenLike[] }>;
 	includeResolver?: unknown;
 	filename?: string | null;
+	/** Name -> replacement, for every macro the lexer defined. */
+	macros?: Record<string, unknown>;
 }
 
 export interface CompilerLike {
@@ -291,6 +293,8 @@ export interface RunResult {
 	sources: Map<string, string>;
 	/** Files pulled in by #include. */
 	includes: string[];
+	/** Macro names the lexer defined, for highlighting their uses. */
+	macros: string[];
 	elapsedMs: number;
 }
 
@@ -343,9 +347,20 @@ function finish(
 		tokens: compiler.lexer?.tokens ?? [],
 		sources,
 		includes: tracker.includes,
+		macros: macroNames(compiler),
 		elapsedMs,
 		...partial,
 	};
+}
+
+/**
+ * The macro names the lexer ended up with, including ones from `#include`d
+ * files. Read from the instance rather than the source, because `#define` is
+ * the lexer's business and macro parameters are not distinguishable afterwards.
+ */
+function macroNames(compiler: CompilerLike): string[] {
+	const macros = compiler.lexer?.macros;
+	return macros && typeof macros === 'object' ? Object.keys(macros) : [];
 }
 
 /**
@@ -407,6 +422,7 @@ function crashed(error: unknown, tracker: IncludeTracker, options: RunOptions): 
 		tokens: [],
 		sources: options.filePath ? new Map([[options.filePath, options.source]]) : new Map(),
 		includes: tracker.includes,
+		macros: [],
 		elapsedMs: 0,
 	};
 }

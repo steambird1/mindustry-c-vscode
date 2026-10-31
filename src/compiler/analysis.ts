@@ -110,6 +110,7 @@ export function fromRun(
 		mainPath,
 		sources: result.sources,
 		includes: result.includes,
+		macros: result.macros,
 		...(result.fatalError ? { internalError: firstLine(result.fatalError) } : {}),
 	});
 

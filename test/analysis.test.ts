@@ -52,6 +52,7 @@ TypeError: ${FIRST_LINE}
 		tokens: [],
 		sources: new Map([[PATH, TEXT]]),
 		includes: [],
+		macros: [],
 		elapsedMs: 1,
 	};
 }
@@ -67,6 +68,7 @@ function cleanRun(): RunResult {
 		tokens: [],
 		sources: new Map([[PATH, TEXT]]),
 		includes: [],
+		macros: [],
 		elapsedMs: 1,
 	};
 }
