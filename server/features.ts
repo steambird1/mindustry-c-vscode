@@ -951,12 +951,15 @@ export const SEMANTIC_TOKEN_MODIFIERS = ['declaration'] as const;
  * resolved references are emitted, so an unresolved name keeps whatever the
  * grammar gave it rather than being painted as a variable.
  *
- * Positions are relative to `document.text`; a caller holding a stale index
- * must not use this, or the ranges land on the wrong words.
+ * A stale index (the text changed since the analysis) is usable here: a token
+ * is kept only while its name still sits where the index recorded it and the
+ * word boundaries still hold. That preserves the colours an edit did not move
+ * instead of clearing the whole file until the next analysis.
  */
 export function semanticTokens(document: IndexedDocument): number[] {
 	const tokens: Array<{ line: number; character: number; length: number; type: number; modifiers: number }> = [];
 	const seen = new Set<string>();
+	const starts = lineStarts(document.text);
 
 	for (const reference of document.index.references) {
 		const target = reference.target;
@@ -964,6 +967,10 @@ export function semanticTokens(document: IndexedDocument): number[] {
 		// References from an `#include` carry offsets into that header.
 		if (document.mainPath && reference.path && !samePath(reference.path, document.mainPath)) continue;
 		if (reference.range.start.line !== reference.range.end.line) continue;
+		// The index may be one keystroke behind. Keep only the tokens the edit
+		// left where they were; anything it moved is dropped rather than painted
+		// over whatever now occupies that position.
+		if (!spellsName(document.text, offsetIn(starts, reference.range.start), target.name)) continue;
 
 		const type = semanticTokenType(target);
 		if (type < 0) continue;
@@ -984,7 +991,7 @@ export function semanticTokens(document: IndexedDocument): number[] {
 	// Macro uses never reach the AST: the lexer expands them before parsing, so
 	// there is no reference to paint. The names come from the lexer instead, and
 	// the occurrences are matched in code only -- not in comments or literals.
-	for (const macro of macroOccurrences(document.text, document.index.macros ?? [])) {
+	for (const macro of macroOccurrences(document.text, document.index.macros ?? [], starts)) {
 		const key = `${macro.line}:${macro.character}:${macro.character + macro.length}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
@@ -1037,7 +1044,8 @@ function semanticTokenType(symbol: SymbolInfo): number {
  */
 function macroOccurrences(
 	text: string,
-	names: readonly string[]
+	names: readonly string[],
+	starts: number[]
 ): Array<{ line: number; character: number; length: number }> {
 	const wanted = new Set(names);
 	if (wanted.size === 0) return [];
@@ -1046,11 +1054,6 @@ function macroOccurrences(
 	scanCode(text, 0, text.length, (_character, index) => {
 		code[index] = 1;
 	});
-
-	const starts = [0];
-	for (let index = 0; index < text.length; index++) {
-		if (text.charCodeAt(index) === 10) starts.push(index + 1);
-	}
 
 	const occurrences: Array<{ line: number; character: number; length: number }> = [];
 	for (const match of text.matchAll(/[A-Za-z_]\w*/g)) {
@@ -1061,6 +1064,35 @@ function macroOccurrences(
 		occurrences.push({ line, character, length: match[0].length });
 	}
 	return occurrences;
+}
+
+/** Offsets at which each line starts. */
+function lineStarts(text: string): number[] {
+	const starts = [0];
+	for (let index = 0; index < text.length; index++) {
+		if (text.charCodeAt(index) === 10) starts.push(index + 1);
+	}
+	return starts;
+}
+
+/** Offset of a 0-based line/character position. */
+function offsetIn(starts: number[], position: Position): number {
+	const line = Math.min(Math.max(0, position.line), starts.length - 1);
+	return starts[line] + Math.max(0, position.character);
+}
+
+/**
+ * Whether `name` is still written at `offset`, as a whole word.
+ *
+ * A token from an index that is one keystroke behind can point at text that has
+ * moved or changed; a token from a macro expansion can point at a placeholder
+ * near the definition. Painting either would colour the wrong characters.
+ */
+function spellsName(text: string, offset: number, name: string): boolean {
+	if (offset < 0 || text.slice(offset, offset + name.length) !== name) return false;
+	const before = offset > 0 ? text[offset - 1] : '';
+	const after = text[offset + name.length] ?? '';
+	return !/[A-Za-z0-9_]/.test(before) && !/[A-Za-z0-9_]/.test(after);
 }
 
 function positionOfOffset(starts: number[], offset: number): { line: number; character: number } {

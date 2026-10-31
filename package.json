@@ -2,7 +2,7 @@
   "name": "mindustry-c-vscode",
   "displayName": "Mindustry-C",
   "description": "Language support for Mindustry-C: the C dialect compiled to Mindustry Logic (mlog).",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "license": "MIT",
   "publisher": "steambird",

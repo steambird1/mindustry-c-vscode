@@ -212,11 +212,16 @@ literals excluded) to paint them. The expansion tokens themselves are not
 trustworthy for positions, which is why a reference is guarded by the source
 text at its offset.
 
-Semantic tokens are answered only from a current index. The client asks
-immediately on open, while analysis is still inside its debounce window, and
-does not ask again on its own -- so the server remembers such a document and
-sends `workspace/semanticTokens/refresh` when the index lands. Without that, a
-file keeps its plain TextMate colours until the next edit or theme change.
+Semantic tokens are answered from the current index when there is one. When the
+analysis is one keystroke behind, the stale index is used but every token is
+re-checked against the current text: its name must still sit at the recorded
+position as a whole word. That keeps the colours an edit did not move instead
+of clearing the file for the length of the debounce, and the tokens the stale
+answer could not vouch for come back via a refresh once the analysis lands. A
+document with no index at all (just opened) gets an empty answer and the same
+refresh -- the client asks immediately on open and does not ask again on its
+own, so without it a file keeps its plain TextMate colours until the next edit
+or theme change.
 
 ### Checking these claims against the compiler
 

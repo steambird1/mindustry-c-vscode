@@ -462,6 +462,33 @@ describe('the language server, over the wire', () => {
 		assert.ok(after.data.length > 0, 'tokens are still empty after the refresh');
 	});
 
+	it('keeps the semantic tokens an edit did not move, and refreshes when analysis lands', async () => {
+		// Appending a comment moves nothing, so the stale answer can keep every
+		// recorded token instead of clearing the file while analysis catches up.
+		client.write({
+			method: 'textDocument/didChange',
+			params: {
+				textDocument: { uri: INCLUDE_MAIN, version: 2 },
+				contentChanges: [
+					{ text: '#include "lib.h"\nint main(void) {\n    return fromBuffer(1);\n}\n// edit\n' },
+				],
+			},
+		});
+
+		const during = (await client.request('textDocument/semanticTokens/full', {
+			textDocument: { uri: INCLUDE_MAIN },
+		})) as { data: number[] };
+		assert.ok(during.data.length > 0, 'the old tokens were cleared during an edit');
+
+		const seen = client.countRequests('workspace/semanticTokens/refresh');
+		await client.waitForRequest('workspace/semanticTokens/refresh', seen, 20000);
+
+		const after = (await client.request('textDocument/semanticTokens/full', {
+			textDocument: { uri: INCLUDE_MAIN },
+		})) as { data: number[] };
+		assert.ok(after.data.length > 0, 'tokens are missing after the analysis landed');
+	});
+
 	it('never publishes a finding under a uri that is not a document', () => {
 		const known = new Set([
 			CANONICAL,

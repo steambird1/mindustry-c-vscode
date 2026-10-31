@@ -559,17 +559,23 @@ connection.onCodeAction(params => {
 });
 
 connection.onRequest('textDocument/semanticTokens/full', (params: { textDocument: { uri: string } }) => {
-	// Strict, unlike completion: a stale index would paint the previous text's
-	// ranges onto the current one. An empty answer leaves TextMate in charge
-	// until the next analysis lands -- and `publish` then asks the client to ask
-	// again, because it will not do so by itself.
-	const entry = indexed(params.textDocument.uri);
+	const uri = params.textDocument.uri;
+	// A stale index is still usable: `semanticTokens` keeps only the tokens
+	// whose name is still at the recorded position, so an edit does not clear
+	// the whole file. No index at all has nothing to keep.
+	const entry = indexed(uri, { allowStale: true });
 	if (!entry) {
-		semanticRefreshPending.add(params.textDocument.uri);
+		semanticRefreshPending.add(uri);
 		return { data: [] };
 	}
-	const document = documents.get(params.textDocument.uri);
+
+	const document = documents.get(uri);
 	const current = document ? { ...entry, text: document.getText() } : entry;
+	if (document && entry.index.version !== document.version) {
+		// Ask for the full set once the analysis catches up: the dropped tokens
+		// are exactly the ones this stale answer could not vouch for.
+		semanticRefreshPending.add(uri);
+	}
 	return { data: semanticTokens(current) };
 });
 

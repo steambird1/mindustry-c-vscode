@@ -676,6 +676,33 @@ int main(void) {
 			'a macro expansion location leaked into the file'
 		);
 	});
+	it('keeps the tokens an edit below them did not move', () => {
+		const before = semanticTokens(document);
+		const appended = semanticTokens({ ...document, text: `${SOURCE}// trailing edit\n` });
+		assert.deepEqual(appended, before, 'an edit after the code removed tokens');
+	});
+
+	it('drops a token whose name an edit moved or changed', () => {
+		const declaration = positionIn(SOURCE, SOURCE.indexOf('total(int a'));
+
+		const shifted = decode(semanticTokens({ ...document, text: `// one more line\n${SOURCE}` }));
+		assert.equal(
+			shifted.some(token => token.line === declaration.line && token.character === declaration.character),
+			false,
+			'a token was painted at its old, now shifted, position'
+		);
+
+		// Renaming `total` to `totals` leaves the old range holding `total`, but
+		// not as a whole word, so the token must go rather than colour half of it.
+		const renamed = decode(
+			semanticTokens({ ...document, text: SOURCE.replace('int total(', 'int totals(') })
+		);
+		assert.equal(
+			renamed.some(token => token.line === declaration.line && token.character === declaration.character),
+			false,
+			'a token was painted over half of a renamed identifier'
+		);
+	});
 });
 
 describe('outline', () => {
