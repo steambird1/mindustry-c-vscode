@@ -80,7 +80,13 @@ otherwise untouched.
 
 `analyze()` deliberately returns the AST even when `ok` is false: a user is
 mid-edit most of the time, and a broken file still has to offer completion and
-go-to-definition.
+go-to-definition. When the parser reported errors it still runs the semantic
+pass over the incomplete AST, because symbols, `scope` and `dataType` are what
+the editor's index is built from; without that pass every completion item shows
+the type as `?`. That recovery pass's own errors are muted (the analyser would
+otherwise add cascading "undeclared" noise on top of the real parse error) and
+an exception leaves the parse-only AST in place. The diagnostics returned are
+exactly the ones the parser raised.
 
 ### 0002 in detail
 
@@ -373,6 +379,15 @@ compiler's own browser UI terminates its worker for the same reason
 (`compileWorker.terminate()`). The host clears its worker reference before
 terminating and checks that reference in the exit handler, so a deliberate stop
 is not reported as a crash, and the next build starts a fresh thread.
+
+A **hang** is not a crash. If the analyser never returns — a synchronous loop in
+the compiler, for example — the analysis worker stays alive and the supervisor
+never hears back: the in-flight request stays pending, later requests queue
+behind the blocked thread, and completion/hover keep answering from the last
+index. There is no analysis watchdog, so only reloading the window (or the
+extension) terminates the thread. A timeout would have to terminate and respawn
+the worker, because a loop inside it cannot be interrupted from outside; it is
+deliberately not implemented yet.
 
 What the user sees when a run dies is less obvious than it looks, because a
 crash is not an error: patch 0001 catches it and returns a run with

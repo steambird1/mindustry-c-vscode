@@ -1,8 +1,8 @@
 diff --git a/mindc.js b/mindc.js
-index 4e896b5..e713591 100644
+index ede1b8d..eb7999e 100644
 --- a/mindc.js
 +++ b/mindc.js
-@@ -342,10 +342,18 @@ export class Compiler {
+@@ -348,10 +348,18 @@ export class Compiler {
  
      }
      
@@ -25,7 +25,7 @@ index 4e896b5..e713591 100644
  
  			// Handle extensions here now
  			const extensions = [...this.embeddedExtensions, ...tokens.extraExtensions];
-@@ -522,6 +530,47 @@ export class Compiler {
+@@ -558,6 +566,76 @@ export class Compiler {
  			this.optimizer = new Optimizer(this);
  			this.codeGenerator = new CodeGenerator(this);
  
@@ -46,7 +46,36 @@ index 4e896b5..e713591 100644
 +
 +            const parsed = this.parser.parse();
 +            if (parsed.errors.length) {
-+                return { ast: parsed.ast, ok: false, errors: this.getAllErrors(), warnings: this.getAllWarnings() };
++                /*
++                A file that does not parse still has usable declarations, and
++                the editor's index needs them: without this pass every
++                declaration comes back with the type `?`, because the parser
++                does not annotate `scope`, `dataType` or symbols.
++
++                The analyser will produce cascading errors on an incomplete
++                AST, so its reporting is muted while it runs and the errors the
++                parser actually raised are returned. An exception here is not
++                fatal either: the parse-only AST still carries names and
++                locations, and the index can fall back to those.
++                */
++                const errors = this.getAllErrors();
++                const warnings = this.getAllWarnings();
++                let ast = parsed.ast;
++                const analyzer = this.semanticAnalyzer;
++                const addError = analyzer.addError;
++                const addWarning = analyzer.addWarning;
++                analyzer.addError = () => {};
++                analyzer.addWarning = () => {};
++                try {
++                    const analyzed = analyzer.analyze(parsed.ast);
++                    ast = analyzed.ast ?? parsed.ast;
++                } catch {
++                    // Keep the parse-only AST.
++                } finally {
++                    analyzer.addError = addError;
++                    analyzer.addWarning = addWarning;
++                }
++                return { ast, ok: false, errors, warnings };
 +            }
 +            const analyzed = this.semanticAnalyzer.analyze(parsed.ast);
 +            return {

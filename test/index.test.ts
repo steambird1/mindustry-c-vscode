@@ -18,6 +18,8 @@
  * longer means what it did.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { before, describe, it } from 'node:test';
 
 import { capabilities } from '../src/compiler/bridge';
@@ -335,6 +337,72 @@ int main(void) { return 0; }
 
 		const shown = hover(strings, positionIn(STRINGS, STRINGS.indexOf('native')));
 		assert.match(shown?.contents ?? '', /string_t native/);
+	});
+});
+
+describe('a file that does not parse', () => {
+	/*
+	 * Completion and hover are needed most while a line is half typed. The
+	 * analyser therefore runs even when the parser has already failed, with its
+	 * own diagnostics muted; without that pass every declaration in the index
+	 * comes back as `?`.
+	 */
+	it('still types what did parse, header symbols included', async () => {
+		const BROKEN = `#include <string.h>
+int helper(void) { return 1; }
+int main(void) {
+	string_t s = "hi";
+	string_view v = ;
+	return sv_len(v) + helper();
+}
+`;
+		const includeDir = path.join(__dirname, '..', '..', 'out', 'include');
+		const response = await analyse(
+			{ ...request(BROKEN), includePaths: [includeDir] },
+			{
+				readFile: target => {
+					try {
+						return fs.readFileSync(target, 'utf8');
+					} catch {
+						return null;
+					}
+				},
+				pathOf: () => PATH,
+			}
+		);
+
+		assert.ok(
+			response.diagnostics.some(diagnostic =>
+				/SEMICOLON|expression|Unexpected/.test(diagnostic.message)
+			),
+			'the fixture must keep its parse error'
+		);
+		assert.ok(response.index, 'no index for the broken fixture');
+		const index = response.index;
+		const typeOf = (name: string) =>
+			index.symbols.find(symbol => symbol.name === name)?.type;
+
+		assert.equal(typeOf('sv_len'), 'int(string_view)', 'a header function lost its type');
+		assert.equal(typeOf('sv_of_string'), 'string_view(string_t)');
+		assert.match(typeOf('helper') ?? '', /^int\(/, 'a file function lost its type');
+		assert.equal(typeOf('s'), 'string_t', 'a local lost its type');
+	});
+
+	it('does not turn the analyser`s recovery errors into diagnostics', async () => {
+		const BROKEN = `int main(void) {
+	string_t s = "hi";
+	string_view v = ;
+	return 0;
+}
+`;
+		const response = await analyse(request(BROKEN), host);
+		assert.ok(response.diagnostics.length > 0, 'the parse error is missing');
+		// Cascading "cannot initialise" / "undeclared" errors from the incomplete
+		// AST would drown the one real message.
+		assert.ok(
+			response.diagnostics.every(diagnostic => !/Cannot initialize|Undeclared identifier/.test(diagnostic.message)),
+			`recovery errors leaked: ${response.diagnostics.map(diagnostic => diagnostic.message).join(' | ')}`
+		);
 	});
 });
 
