@@ -43,6 +43,13 @@ export interface IndexedDocument {
 	 * `#include`, whose offsets belong to another file.
 	 */
 	mainPath?: string | null;
+	/**
+	 * The text the index was built from, when the buffer has changed since.
+	 *
+	 * Semantic tokens use it to map recorded positions onto the current text
+	 * instead of dropping everything after the edit.
+	 */
+	analyzedText?: string;
 }
 
 /* ------------------------------------------------------------------ *
@@ -960,6 +967,14 @@ export function semanticTokens(document: IndexedDocument): number[] {
 	const tokens: Array<{ line: number; character: number; length: number; type: number; modifiers: number }> = [];
 	const seen = new Set<string>();
 	const starts = lineStarts(document.text);
+	// The index may describe the text before the latest keystrokes. Map each
+	// recorded span onto the current text instead of dropping everything after
+	// the edit: text inserted or removed before a token moves it by a known
+	// delta, and a token the edit runs through is the only one without a
+	// trustworthy position.
+	const analyzed = document.analyzedText ?? document.text;
+	const oldStarts = analyzed === document.text ? starts : lineStarts(analyzed);
+	const edit = diffTexts(analyzed, document.text);
 
 	for (const reference of document.index.references) {
 		const target = reference.target;
@@ -967,22 +982,27 @@ export function semanticTokens(document: IndexedDocument): number[] {
 		// References from an `#include` carry offsets into that header.
 		if (document.mainPath && reference.path && !samePath(reference.path, document.mainPath)) continue;
 		if (reference.range.start.line !== reference.range.end.line) continue;
-		// The index may be one keystroke behind. Keep only the tokens the edit
-		// left where they were; anything it moved is dropped rather than painted
-		// over whatever now occupies that position.
-		if (!spellsName(document.text, offsetIn(starts, reference.range.start), target.name)) continue;
+
+		const offset = shiftOffset(
+			offsetIn(oldStarts, reference.range.start),
+			target.name.length,
+			edit
+		);
+		if (offset < 0) continue;
+		if (!spellsName(document.text, offset, target.name)) continue;
 
 		const type = semanticTokenType(target);
 		if (type < 0) continue;
 
-		const key = `${reference.range.start.line}:${reference.range.start.character}:${reference.range.end.character}`;
+		const { line, character } = positionOfOffset(starts, offset);
+		const key = `${line}:${character}:${character + target.name.length}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
 
 		tokens.push({
-			line: reference.range.start.line,
-			character: reference.range.start.character,
-			length: Math.max(1, reference.range.end.character - reference.range.start.character),
+			line,
+			character,
+			length: target.name.length,
 			type,
 			modifiers: reference.isDeclaration ? 1 : 0,
 		});
@@ -1093,6 +1113,62 @@ function spellsName(text: string, offset: number, name: string): boolean {
 	const before = offset > 0 ? text[offset - 1] : '';
 	const after = text[offset + name.length] ?? '';
 	return !/[A-Za-z0-9_]/.test(before) && !/[A-Za-z0-9_]/.test(after);
+}
+
+interface TextEdit {
+	/** Where the change begins in both texts. */
+	start: number;
+	/** End of the replaced span in the analysed text. */
+	oldEnd: number;
+	/** End of the replacement in the current text. */
+	newEnd: number;
+	/** Net length change. */
+	delta: number;
+}
+
+/**
+ * The single replacement that turns `before` into `after`.
+ *
+ * The server syncs full text, so a change arrives as a whole new document. The
+ * common prefix and suffix recover the span that actually changed, which is one
+ * contiguous edit for typing and pasting.
+ */
+function diffTexts(before: string, after: string): TextEdit {
+	if (before === after) {
+		return { start: before.length, oldEnd: before.length, newEnd: after.length, delta: 0 };
+	}
+
+	const max = Math.min(before.length, after.length);
+	let prefix = 0;
+	while (prefix < max && before[prefix] === after[prefix]) prefix++;
+
+	let suffix = 0;
+	while (
+		suffix < max - prefix &&
+		before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+	) {
+		suffix++;
+	}
+
+	return {
+		start: prefix,
+		oldEnd: before.length - suffix,
+		newEnd: after.length - suffix,
+		delta: after.length - before.length,
+	};
+}
+
+/**
+ * Where a recorded span moved to, or -1 when the edit overlaps it.
+ *
+ * A span before the change stays put; one after it moves by the net delta. A
+ * span the change runs through has no trustworthy position -- its name may be
+ * half rewritten -- so it is dropped until the next analysis.
+ */
+function shiftOffset(offset: number, length: number, edit: TextEdit): number {
+	if (offset + length <= edit.start) return offset;
+	if (offset >= edit.oldEnd) return offset + edit.delta;
+	return -1;
 }
 
 function positionOfOffset(starts: number[], offset: number): { line: number; character: number } {

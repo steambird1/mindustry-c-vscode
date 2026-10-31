@@ -489,6 +489,31 @@ describe('the language server, over the wire', () => {
 		assert.ok(after.data.length > 0, 'tokens are missing after the analysis landed');
 	});
 
+	it('keeps the tokens after an insertion at the top of the file', async () => {
+		const uri = 'file:///c%3A/project/shift.mlgc';
+		const text = '#include "lib.h"\nint main(void) {\n    return fromBuffer(1);\n}\n';
+		open(uri, 'mlgc', text);
+		await client.waitForPublish(uri, 20000);
+
+		const baseline = (await client.request('textDocument/semanticTokens/full', {
+			textDocument: { uri },
+		})) as { data: number[] };
+		assert.ok(baseline.data.length > 0, 'the fixture produced no tokens');
+
+		// Inserting a line moves every token; they must be shifted, not dropped.
+		client.write({
+			method: 'textDocument/didChange',
+			params: {
+				textDocument: { uri, version: 2 },
+				contentChanges: [{ text: `// note\n${text}` }],
+			},
+		});
+		const during = (await client.request('textDocument/semanticTokens/full', {
+			textDocument: { uri },
+		})) as { data: number[] };
+		assert.ok(during.data.length > 0, 'the tokens after the insertion were dropped');
+	});
+
 	it('never publishes a finding under a uri that is not a document', () => {
 		const known = new Set([
 			CANONICAL,

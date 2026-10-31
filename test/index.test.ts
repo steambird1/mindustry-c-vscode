@@ -678,29 +678,52 @@ int main(void) {
 	});
 	it('keeps the tokens an edit below them did not move', () => {
 		const before = semanticTokens(document);
-		const appended = semanticTokens({ ...document, text: `${SOURCE}// trailing edit\n` });
+		const appended = semanticTokens({
+			...document,
+			text: `${SOURCE}// trailing edit\n`,
+			analyzedText: SOURCE,
+		});
 		assert.deepEqual(appended, before, 'an edit after the code removed tokens');
 	});
 
-	it('drops a token whose name an edit moved or changed', () => {
+	it('shifts the tokens after an insertion instead of dropping them', () => {
+		const prefix = '// one more line\n';
+		const shifted = decode(
+			semanticTokens({ ...document, text: prefix + SOURCE, analyzedText: SOURCE })
+		);
+
+		const oldPosition = positionIn(SOURCE, SOURCE.indexOf('total(int a'));
+		const newPosition = positionIn(prefix + SOURCE, prefix.length + SOURCE.indexOf('total(int a'));
+
+		assert.equal(newPosition.line, oldPosition.line + 1, 'the fixture did not shift the token');
+		assert.ok(
+			shifted.some(token => token.line === newPosition.line && token.character === newPosition.character),
+			'the token after the insertion was dropped'
+		);
+		assert.equal(
+			shifted.some(token => token.line === oldPosition.line && token.character === oldPosition.character),
+			false,
+			'the token was left at its old position'
+		);
+	});
+
+	it('drops only the token the edit changed', () => {
+		const renamed = SOURCE.replace('int total(', 'int totals(');
+		const tokens = decode(semanticTokens({ ...document, text: renamed, analyzedText: SOURCE }));
+
 		const declaration = positionIn(SOURCE, SOURCE.indexOf('total(int a'));
-
-		const shifted = decode(semanticTokens({ ...document, text: `// one more line\n${SOURCE}` }));
 		assert.equal(
-			shifted.some(token => token.line === declaration.line && token.character === declaration.character),
+			tokens.some(token => token.line === declaration.line && token.character === declaration.character),
 			false,
-			'a token was painted at its old, now shifted, position'
+			'the renamed declaration was painted'
 		);
 
-		// Renaming `total` to `totals` leaves the old range holding `total`, but
-		// not as a whole word, so the token must go rather than colour half of it.
-		const renamed = decode(
-			semanticTokens({ ...document, text: SOURCE.replace('int total(', 'int totals(') })
-		);
-		assert.equal(
-			renamed.some(token => token.line === declaration.line && token.character === declaration.character),
-			false,
-			'a token was painted over half of a renamed identifier'
+		// The call further down is untouched; the net +1 shift keeps its line and
+		// character because the line start moved with it.
+		const use = positionIn(SOURCE, SOURCE.indexOf('total(p.x'));
+		assert.ok(
+			tokens.some(token => token.line === use.line && token.character === use.character),
+			'the untouched call was dropped'
 		);
 	});
 });

@@ -570,7 +570,9 @@ connection.onRequest('textDocument/semanticTokens/full', (params: { textDocument
 	}
 
 	const document = documents.get(uri);
-	const current = document ? { ...entry, text: document.getText() } : entry;
+	const current = document
+		? { ...entry, text: document.getText(), analyzedText: entry.text }
+		: entry;
 	if (document && entry.index.version !== document.version) {
 		// Ask for the full set once the analysis catches up: the dropped tokens
 		// are exactly the ones this stale answer could not vouch for.
