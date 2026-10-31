@@ -223,7 +223,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.mlgc",
-					"match": "\\b(continue|register|unsigned|volatile|default|widthof|typedef|byname|remote|double|extern|inline|return|signed|sizeof|static|struct|switch|break|const|false|float|short|union|while|auto|bool|case|char|else|enum|goto|long|near|true|void|null|for|int|do|if)\\b"
+					"match": "\\b(persistent|continue|register|unsigned|volatile|default|widthof|typedef|byname|remote|double|extern|inline|return|signed|sizeof|static|struct|switch|break|const|false|float|short|union|while|auto|bool|case|char|else|enum|goto|long|near|true|void|null|for|int|do|if)\\b"
 				}
 			]
 		},

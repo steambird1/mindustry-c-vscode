@@ -25,6 +25,7 @@
 		"long",
 		"near",
 		"null",
+		"persistent",
 		"register",
 		"remote",
 		"return",
