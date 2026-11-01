@@ -6,8 +6,12 @@ Logic (`mlog`).
 - **Diagnostics while you type**, from the compiler's own semantic analysis —
   parse and analyse only, debounced, on a worker thread so a compiler crash
   cannot take the editor with it.
-- **Navigation**: go to definition, find references, rename symbol, hover,
-  signature help, completion.
+- **Navigation**: go to definition and declaration (function prototypes and
+  forward declarations), find references, rename symbol, hover, signature help,
+  completion.
+- **Documentation**: hover, completion and signature help show the comment
+  block directly above a declaration, including comments that live in included
+  headers.
 - **Quick fixes** for the dialect's own mistakes, such as declaring a missing
   processor block (`message1`) at file scope.
 - **Semantic highlighting** on top of the grammar: functions, parameters, locals,

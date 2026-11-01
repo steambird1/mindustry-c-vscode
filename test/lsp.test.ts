@@ -254,6 +254,7 @@ describe('the language server, over the wire', () => {
 		for (const capability of [
 			'hoverProvider',
 			'definitionProvider',
+			'declarationProvider',
 			'referencesProvider',
 			'renameProvider',
 			'completionProvider',
@@ -319,6 +320,21 @@ describe('the language server, over the wire', () => {
 		const active = help.signatures[help.activeSignature];
 		assert.equal(active.label, 'int fromBuffer(int value)');
 		assert.equal(help.activeParameter, 0);
+	});
+
+	it('answers go-to-declaration from a use', async () => {
+		// The header only declares `fromBuffer`; the declaration provider must
+		// reach that prototype even though the index prefers the definition for
+		// ordinary navigation.
+		const found = await client.request('textDocument/declaration', {
+			textDocument: { uri: INCLUDE_MAIN },
+			position: { line: 2, character: 17 },
+		});
+		const locations = (Array.isArray(found) ? found : found ? [found] : []) as Array<{ uri: string }>;
+		assert.ok(
+			locations.some(location => location.uri === INCLUDE_HEADER),
+			`declaration did not reach the header: ${JSON.stringify(locations)}`
+		);
 	});
 
 	it('answers completion while the index is one keystroke behind', async () => {

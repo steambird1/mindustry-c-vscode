@@ -274,6 +274,29 @@ to keep them apart:
   `#include <string.h>` resolves in an installed extension while a project
   header of the same name still wins.
 
+### Documentation comments
+
+Comments are not in the AST, so the index reads them from the source text at the
+declaration's **statement** position (a declarator's own location is its name;
+its parent declaration carries the statement start, and a member's type
+specifier marks the start of the member). A comment attaches when only
+whitespace — at most one blank line — separates it from the declaration:
+
+- consecutive `//`, `///` or `//!` lines;
+- `/* ... */` and `/** ... */`, with the leading `*` of each line stripped.
+
+The cleaned Markdown is stored as `SymbolInfo.doc` (and
+`StructInfo.members[].doc`), so hover works from the index without keeping
+header texts in the server. Text of included files — including unsaved editor
+buffers — is already part of the run's `sources`. A function's documentation is
+preferred from its **prototype**, which is where a header normally carries it;
+the definition's own comment is the fallback. Lookups are cached per
+`path:offset`, and scanning is capped at 4 KB per declaration.
+
+Hover shows the comment between the signature and "Declared in…"; completion
+items carry it as `documentation`, and signature help carries it as
+`SignatureInformation.documentation`.
+
 ### Checking these claims against the compiler
 
 Every row in that table came from running the compiler, not from reading it. The
@@ -369,7 +392,11 @@ these quirks rather than patching them into the compiler:
   keeps the first declaration's location — often the prototype. Definitions are
   collected once, every use/reference/rename points at the definition, and a
   prototype that was removed outright (a header declaration) is rebuilt from
-  the symbol's location the first time its name is used.
+  the symbol's location the first time its name is used. That first declaration
+  is also stored on the symbol as `declaration`, which is what
+  `textDocument/declaration` answers; `path`/`range` stay on the definition.
+  A `struct`/`union` forward declaration is linked to the later complete type
+  the same way, and the outline lists the type once (the definition).
 - **Enums** keep their tag in a `TypeSpecifier` attribute, not in the program
   scope. Since `2de1372` they sit in `typeDefinitions` in source order, so a
   struct declared later can use an earlier tag; an enum declared inside a member

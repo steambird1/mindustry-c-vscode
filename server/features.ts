@@ -242,12 +242,13 @@ export function hover(document: IndexedDocument, position: Position): Hover | nu
 
 	// A member of a struct: `p.x` where x is a field.
 	if (reference.target?.kind === 'field') {
-		const { type, name, container } = reference.target;
+		const { type, name, container, doc } = reference.target;
 		return {
 			contents: [
 				'```mlgc',
 				`${type} ${name};`,
 				'```',
+				...(doc ? [doc] : []),
 				...(container ? [`Field of \`${container}\`.`] : []),
 			].join('\n\n'),
 			range: reference.range,
@@ -264,13 +265,19 @@ export function hover(document: IndexedDocument, position: Position): Hover | nu
 		return null;
 	}
 
-	const declaration =
+	const declarationLine =
 		target.path !== null
-			? `\n\nDeclared in \`${basename(target.path)}\`, line ${target.range.start.line + 1}.`
-			: '';
+			? `Declared in \`${basename(target.path)}\`, line ${target.range.start.line + 1}.`
+			: null;
 
 	return {
-		contents: ['```mlgc', signatureOf(target), '```', declaration].join('\n\n'),
+		contents: [
+			'```mlgc',
+			signatureOf(target),
+			'```',
+			...(target.doc ? [target.doc] : []),
+			...(declarationLine ? [declarationLine] : []),
+		].join('\n\n'),
 		range: reference.range,
 	};
 }
@@ -338,6 +345,25 @@ export function definition(
 	const reference = referenceAt(document, position);
 	if (!reference?.target?.path) return null;
 	return { uri: toUri(reference.target.path), range: reference.target.range };
+}
+
+/**
+ * The first declaration of the symbol under the cursor.
+ *
+ * For a function that is its prototype, for a struct/union with a forward
+ * declaration it is that forward declaration; everything else has only one
+ * declaration site. `definition` answers the complement: the function body or
+ * the complete type.
+ */
+export function declaration(
+	document: IndexedDocument,
+	position: Position,
+	toUri: (path: string) => string
+): Location | null {
+	const target = referenceAt(document, position)?.target;
+	if (!target) return null;
+	const site = target.declaration ?? { path: target.path, range: target.range };
+	return site.path ? { uri: toUri(site.path), range: site.range } : null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -534,6 +560,7 @@ function memberCompletions(
 		label: member.name,
 		kind: 'field' as const,
 		detail: member.type,
+		...(member.doc ? { documentation: member.doc } : {}),
 	}));
 }
 
@@ -634,6 +661,7 @@ function generalCompletions(document: IndexedDocument, position: Position): Comp
 						? 'class'
 						: 'variable',
 			detail: symbol.type,
+			...(symbol.doc ? { documentation: symbol.doc } : {}),
 			// The user's own declarations, by order of appearance.
 			sortText: `0${String(symbol.range.start.line).padStart(6, '0')}${symbol.name}`,
 		});
@@ -671,6 +699,8 @@ export interface SignatureParameter {
 export interface Signature {
 	label: string;
 	parameters: SignatureParameter[];
+	/** The declaration's comment, when it has one. */
+	documentation?: string;
 }
 
 export interface SignatureHelp {
@@ -815,11 +845,12 @@ function scanCode(
 function functionSignature(symbol: SymbolInfo): Signature {
 	const match = /^([^()]*)\(([^()]*)\)$/.exec(symbol.type);
 	const returnType = match ? match[1].trim() : '?';
+	const documentation = symbol.doc ? { documentation: symbol.doc } : {};
 	const declared = symbol.parameters;
 	if (!declared) {
 		// No parameter list in the index: an old worker, or a type this cannot
 		// split. The rendered type is still a usable label.
-		return { label: signatureOf(symbol), parameters: [] };
+		return { label: signatureOf(symbol), parameters: [], ...documentation };
 	}
 
 	let label = `${returnType} ${symbol.name}(`;
@@ -832,7 +863,7 @@ function functionSignature(symbol: SymbolInfo): Signature {
 		parameters.push({ label: [start, label.length] });
 	});
 	label += ')';
-	return { label, parameters };
+	return { label, parameters, ...documentation };
 }
 
 /** `void printflush(device)` from the generated tables, with parameter ranges. */
@@ -1359,17 +1390,36 @@ export interface OutlineSymbol {
  * they are reachable through the struct they belong to.
  */
 export function outline(document: IndexedDocument, mainPath?: string | null): OutlineSymbol[] {
-	return document.index.symbols
+	const symbols = document.index.symbols
 		.filter(symbol => symbol.scope === 'file' && symbol.kind !== 'field')
 		// A document's outline is its own declarations; one that came from an
 		// `#include` belongs to that header's outline. Without this the header's
 		// ranges are listed against the including file and point at other lines.
-		.filter(symbol => mainPath === undefined || sameDocument(symbol.path, mainPath))
-		.map(symbol => ({
+		.filter(symbol => mainPath === undefined || sameDocument(symbol.path, mainPath));
+
+	const out: OutlineSymbol[] = [];
+	// A forward declaration and its definition share a name. Show one entry,
+	// preferably the definition (the symbol that points back at the forward).
+	const typeAt = new Map<string, number>();
+	for (const symbol of symbols) {
+		const item: OutlineSymbol = {
 			name: symbol.name,
 			detail: symbol.type,
 			kind:
 				symbol.kind === 'function' ? 'function' : symbol.kind === 'type' ? 'type' : 'variable',
 			range: symbol.range,
-		}));
+		};
+		if (symbol.kind !== 'type') {
+			out.push(item);
+			continue;
+		}
+		const at = typeAt.get(symbol.name);
+		if (at === undefined) {
+			typeAt.set(symbol.name, out.length);
+			out.push(item);
+		} else if (symbol.declaration) {
+			out[at] = item;
+		}
+	}
+	return out;
 }

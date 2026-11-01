@@ -455,6 +455,14 @@ interface WalkState {
 	 */
 	functionTargets: Map<object, SymbolInfo>;
 	/**
+	 * Declarations of variables, parameters and enumerators, keyed by entry.
+	 *
+	 * Uses otherwise re-create a `SymbolInfo` from the entry's location, which
+	 * is the name and therefore has no comment above it. Pointing them at the
+	 * indexed declaration keeps the documentation.
+	 */
+	declarationTargets: Map<object, SymbolInfo>;
+	/**
 	 * Synthetic names to drop from rendered types.
 	 *
 	 * `typedef struct { ... } point_t` gets an internal tag (`__anon_struct_N`)
@@ -462,8 +470,22 @@ interface WalkState {
 	 * rest of the editor should show.
 	 */
 	typeRenames: Map<string, string>;
+	/**
+	 * Uses whose symbol is declared later in the walk order.
+	 *
+	 * `declarationTargets` is filled while walking; a use can be visited before
+	 * its declaration (the AST's property order is not source order). Those
+	 * references are re-pointed at the indexed declaration once the walk ends,
+	 * which is also what carries the declaration's documentation to the use.
+	 */
+	pendingTargets: Array<{ reference: ReferenceInfo; symbol: object }>;
 	/** Declarations the type pre-pass has already recorded. */
 	claimed: WeakSet<object>;
+	/**
+	 * Comment lookups by `path:offset`, so every use of a symbol does not
+	 * rescan the same declaration's comment.
+	 */
+	docCache: Map<string, string | null>;
 }
 
 export function buildDocumentIndex(input: IndexInput): DocumentIndex {
@@ -476,8 +498,11 @@ export function buildDocumentIndex(input: IndexInput): DocumentIndex {
 		structTypes: new Map(),
 		typeSymbols: new Map(),
 		functionTargets: new Map(),
+		declarationTargets: new Map(),
+		pendingTargets: [],
 		typeRenames: new Map(),
 		claimed: new WeakSet(),
+		docCache: new Map(),
 	};
 
 	if (input.ast) {
@@ -485,6 +510,13 @@ export function buildDocumentIndex(input: IndexInput): DocumentIndex {
 		collectTypeDefinitions(program, input.mainPath, texts, state);
 		collectFunctions(program, input.mainPath, texts, state);
 		walk(program, input.mainPath, texts, state, program.scope ?? null, false, null, new WeakSet());
+	}
+
+	// Uses visited before their declaration get the indexed declaration now
+	// that every declaration has been seen.
+	for (const pending of state.pendingTargets) {
+		const declaration = state.declarationTargets.get(pending.symbol);
+		if (declaration) pending.reference.target = declaration;
 	}
 
 	// Type rendering happens while walking, but the alias map is only complete
@@ -613,6 +645,7 @@ function collectEnum(
 	if (!path) return;
 
 	const enumName = asName(node.getAttribute?.('enumName'));
+	const tagDoc = docFor(state, texts, path, location);
 	// `__enum_N` is the compiler's name for a body with no tag.
 	if (enumName && !enumName.startsWith('__')) {
 		const start = texts.offset(path, location.line, location.column, location.index);
@@ -628,6 +661,7 @@ function collectEnum(
 				range: texts.range(path, offset, written[1].length),
 				declarationOffset: offset,
 				...(local === 'local' && owner ? { owner } : {}),
+				...(tagDoc ? { doc: tagDoc } : {}),
 			};
 			state.symbols.push(symbol);
 			state.references.push({
@@ -651,6 +685,7 @@ function collectEnum(
 		const entryPath = entry.location.filename ?? path;
 		const offset = nameOffset(texts, entryPath, entry.location, name, false);
 		if (offset < 0) continue;
+		const entryDoc = docFor(state, texts, entryPath, entry.location);
 		const declared = callLookup(scope, name);
 		const info: SymbolInfo = {
 			kind: 'variable',
@@ -661,6 +696,7 @@ function collectEnum(
 			range: texts.range(entryPath, offset, name.length),
 			declarationOffset: offset,
 			...(local === 'local' && owner ? { owner } : {}),
+			...(entryDoc ? { doc: entryDoc } : {}),
 		};
 		state.symbols.push(info);
 		state.references.push({
@@ -670,6 +706,7 @@ function collectEnum(
 			isDeclaration: true,
 			target: info,
 		});
+		if (declared) state.declarationTargets.set(declared, info);
 	}
 }
 
@@ -694,9 +731,33 @@ function collectFunctions(
 		const path = node.location.filename ?? mainPath;
 		if (!name || !path) continue;
 		const entry = resolveSymbol(node, name, node.scope ?? null);
-		const info = describe(entry, sourceName(name), 'function', 'file', path, texts, node.location, true);
+		const shown = sourceName(name);
+		const info = describe(state, entry, shown, 'function', 'file', path, texts, node.location, true);
 		if (!info) continue;
 		info.parameters = renderParameters(node, path, texts);
+
+		// The analyser keeps the first declaration on the symbol, which is the
+		// prototype when there is one. That is what "go to declaration" wants;
+		// `path`/`range` stay on the definition.
+		const first = entry?.location;
+		if (first) {
+			const firstPath = first.filename ?? path;
+			const firstOffset = nameOffset(texts, firstPath, first, shown, true);
+			if (
+				firstOffset >= 0 &&
+				(firstPath !== info.path || firstOffset !== info.declarationOffset)
+			) {
+				info.declaration = {
+					path: firstPath,
+					range: texts.range(firstPath, firstOffset, shown.length),
+				};
+			}
+			// Documentation usually lives on the prototype in a header; prefer it
+			// over the definition's own comment when both exist.
+			const firstDoc = firstOffset >= 0 ? docFor(state, texts, firstPath, first) : undefined;
+			if (firstDoc) info.doc = firstDoc;
+		}
+
 		declare(state, info, path);
 		if (entry) state.functionTargets.set(entry, info);
 		state.claimed.add(node);
@@ -729,6 +790,10 @@ function collectStruct(
 	const offset = expose ? nameOffset(texts, path, node.location, name, false) : -1;
 	if (expose && offset < 0) return null;
 
+	const isForward = node.isForward === true;
+	const previous = expose ? state.typeSymbols.get(name) ?? null : null;
+	const tagDoc = docFor(state, texts, path, node.location);
+
 	if (expose) {
 		const symbol: SymbolInfo = {
 			kind: 'type',
@@ -739,7 +804,16 @@ function collectStruct(
 			range: texts.range(path, offset, name.length),
 			declarationOffset: offset,
 			...(local === 'local' && owner ? { owner } : {}),
+			...(tagDoc ? { doc: tagDoc } : {}),
 		};
+		// A complete definition that follows a forward declaration keeps the
+		// forward as the "declaration" while `path`/`range` stay on the body.
+		if (!isForward && previous?.path && previous.type === keyword && previous.declarationOffset !== offset) {
+			symbol.declaration = previous.declaration ?? {
+				path: previous.path,
+				range: previous.range,
+			};
+		}
 		state.symbols.push(symbol);
 		state.references.push({
 			path,
@@ -748,7 +822,9 @@ function collectStruct(
 			isDeclaration: true,
 			target: symbol,
 		});
-		state.typeSymbols.set(name, symbol);
+		// A redundant forward after a definition must not replace the complete
+		// type in the name map.
+		if (!isForward || !previous) state.typeSymbols.set(name, symbol);
 	}
 
 	// The analyser resolves the struct's own type into the scope, which gives
@@ -772,6 +848,10 @@ function collectStruct(
 		if (!memberPath) continue;
 		const memberOffset = nameOffset(texts, memberPath, member.location, memberName, false);
 		if (memberOffset < 0) continue;
+		// The member's own location is its name; the type specifier starts the
+		// member declaration, which is where a comment above it ends.
+		const docLocation = (member.type as AstNode | undefined)?.location ?? member.location;
+		const memberDoc = docFor(state, texts, docLocation?.filename ?? memberPath, docLocation);
 
 		const type = memberTypeText(name, memberName, member, state);
 
@@ -805,6 +885,7 @@ function collectStruct(
 			declarationOffset: memberOffset,
 			container: shownName,
 			...(local === 'local' && owner ? { owner } : {}),
+			...(memberDoc ? { doc: memberDoc } : {}),
 		};
 		state.memberDeclarations.set(`${name} ${memberName}`, {
 			path: memberPath,
@@ -824,6 +905,7 @@ function collectStruct(
 			type,
 			offset: memberOffset,
 			...(bitFieldText(member, texts, memberPath) ?? {}),
+			...(memberDoc ? { doc: memberDoc } : {}),
 		});
 	}
 
@@ -926,6 +1008,7 @@ function collectTypedef(
 	state.claimed.add(node);
 	const declaredAt = texts.offset(path, node.location.line, node.location.column, node.location.index);
 	const text = texts.text(path);
+	const doc = docFor(state, texts, path, node.location);
 	const specifier = node.type as AstNode | undefined;
 	const specKeyword = asName(specifier?.typeName);
 
@@ -964,6 +1047,7 @@ function collectTypedef(
 			range: texts.range(aliasPath, offset, name.length),
 			declarationOffset: offset,
 			...(local === 'local' && owner ? { owner } : {}),
+			...(doc ? { doc } : {}),
 		};
 		state.symbols.push(symbol);
 		state.references.push({
@@ -1085,7 +1169,7 @@ function visit(
 		if (node.body) return;
 		let target = symbol ? state.functionTargets.get(symbol) ?? null : null;
 		if (!target) {
-			target = describe(symbol, sourceName(name), 'function', local, path, texts, location, true);
+			target = describe(state, symbol, sourceName(name), 'function', local, path, texts, location, true);
 			if (target) {
 				target.parameters = renderParameters(node, path, texts);
 				declare(state, target, path);
@@ -1116,6 +1200,11 @@ function visit(
 		if (offset < 0) return;
 		const resolved = node.dataType as TypeInfo | null | undefined;
 		const base = resolved ? renderTypeInfo(resolved) : renderSymbolType(symbol?.type, symbol);
+		// A declarator's location is its name; the comment belongs above the
+		// statement, whose position the parent declaration carries.
+		const parent = node.parent as AstNode | undefined;
+		const docLocation = parent?.location ?? location;
+		const doc = docFor(state, texts, docLocation.filename ?? path, docLocation);
 		const info: SymbolInfo = {
 			kind: 'variable',
 			name,
@@ -1128,6 +1217,7 @@ function visit(
 			range: texts.range(path ?? '', offset, name.length),
 			declarationOffset: offset,
 			...(local === 'local' && owner ? { owner } : {}),
+			...(doc ? { doc } : {}),
 		};
 		state.symbols.push(info);
 		state.references.push({
@@ -1137,16 +1227,18 @@ function visit(
 			isDeclaration: true,
 			target: info,
 		});
+		if (symbol) state.declarationTargets.set(symbol, info);
 		return;
 	}
 
 	// A parameter is an untyped node: no `type`, a `name`, and no symbol of its
 	// own, but the function it belongs to can resolve the name.
 	if (!type && name && symbol?.kind === 'parameter') {
-		const info = describe(symbol, name, 'parameter', 'local', path, texts, location, false);
+		const info = describe(state, symbol, name, 'parameter', 'local', path, texts, location, false);
 		if (info) {
 			if (owner) info.owner = owner;
 			declare(state, info, path);
+			if (symbol) state.declarationTargets.set(symbol, info);
 		}
 		return;
 	}
@@ -1179,11 +1271,17 @@ function visit(
 		// not the token's name. Recording it would paint or rename a random part
 		// of the `#define` line.
 		if (texts.text(path ?? '').slice(offset, offset + name.length) !== name) return;
-		const chosen = chooseFunctionTarget(symbol, state, path, texts);
+		const chosen =
+			symbol?.kind === 'function'
+				? chooseFunctionTarget(symbol, state, path, texts)
+				: symbol
+					? state.declarationTargets.get(symbol) ?? null
+					: null;
 		const target =
 			chosen ??
 			(symbol
 				? describe(
+						state,
 						symbol,
 						name,
 						symbol.kind,
@@ -1194,13 +1292,23 @@ function visit(
 						symbol.kind === 'function'
 					)
 				: null);
-		state.references.push({
+		const reference: ReferenceInfo = {
 			path,
 			range: texts.range(path ?? '', offset, name.length),
 			offset,
 			isDeclaration: false,
 			target,
-		});
+		};
+		state.references.push(reference);
+		if (
+			!chosen &&
+			symbol &&
+			(symbol.kind === 'variable' || symbol.kind === 'parameter')
+		) {
+			// The declaration may not have been walked yet; re-point it at the
+			// indexed declaration (and its comment) once the walk finishes.
+			state.pendingTargets.push({ reference, symbol });
+		}
 	}
 }
 
@@ -1318,6 +1426,7 @@ function unwrapSymbolType(type: unknown): TypeInfo | null {
  * reference is recorded unresolved rather than pointing somewhere plausible.
  */
 function describe(
+	state: WalkState,
 	symbol: SymbolEntry | null,
 	name: string,
 	kind: string,
@@ -1332,6 +1441,7 @@ function describe(
 	if (!declarationPath) return null;
 	const offset = nameOffset(texts, declarationPath, location, name, isFunction);
 	if (offset < 0) return null;
+	const doc = docFor(state, texts, declarationPath, location);
 	return {
 		kind,
 		name,
@@ -1340,7 +1450,114 @@ function describe(
 		path: declarationPath,
 		range: texts.range(declarationPath, offset, name.length),
 		declarationOffset: offset,
+		...(doc ? { doc } : {}),
 	};
+}
+
+/** Maximum amount of source scanned back, and of doc kept, per declaration. */
+const DOC_LIMIT = 4096;
+
+/**
+ * The Markdown comment block directly above a declaration.
+ *
+ * Comments are not part of the AST: they are read from the source, starting at
+ * the statement's position (not the name's), and only when nothing but
+ * whitespace -- at most one blank line -- separates them from the declaration.
+ * Results are cached per source position because every use of a symbol asks for
+ * the same declaration again.
+ */
+function docFor(
+	state: WalkState,
+	texts: FileText,
+	path: string | null,
+	location: AstLocation | null
+): string | undefined {
+	if (!path || !location) return undefined;
+	const start = texts.offset(path, location.line, location.column, location.index);
+	const key = `${path}:${start}`;
+	const cached = state.docCache.get(key);
+	if (cached !== undefined) return cached ?? undefined;
+	const doc = commentBefore(texts.text(path), start);
+	state.docCache.set(key, doc ?? null);
+	return doc;
+}
+
+function commentBefore(text: string, start: number): string | undefined {
+	let index = start;
+	let newlines = 0;
+	while (index > 0 && start - index <= DOC_LIMIT) {
+		const code = text.charCodeAt(index - 1);
+		if (code === 32 || code === 9 || code === 13) {
+			index--;
+			continue;
+		}
+		if (code === 10) {
+			newlines++;
+			if (newlines > 2) return undefined;
+			index--;
+			continue;
+		}
+		break;
+	}
+	if (index <= 0 || start - index > DOC_LIMIT) return undefined;
+
+	if (text.slice(Math.max(0, index - 2), index) === '*/') {
+		const open = text.lastIndexOf('/*', index - 2);
+		if (open < 0 || index - open > DOC_LIMIT) return undefined;
+		// A block comment documenting a declaration starts its own line; this
+		// keeps a `/*` inside a preceding expression from being read as one.
+		const lineStart = text.lastIndexOf('\n', open) + 1;
+		if (text.slice(lineStart, open).trim() !== '') return undefined;
+		return cleanBlock(text.slice(open + 2, index - 2));
+	}
+
+	const lineStart = text.lastIndexOf('\n', index - 1) + 1;
+	const line = text.slice(lineStart, index);
+	if (!/^[ \t]*\/\//.test(line)) return undefined;
+	const lines = [line];
+	let cursor = lineStart;
+	let scanned = line.length;
+	while (cursor > 0 && scanned < DOC_LIMIT) {
+		const previousEnd = cursor - 1;
+		const previousStart = text.lastIndexOf('\n', previousEnd - 1) + 1;
+		const previous = text.slice(previousStart, previousEnd);
+		if (!/^[ \t]*\/\//.test(previous)) break;
+		lines.unshift(previous);
+		scanned += previous.length + 1;
+		cursor = previousStart;
+	}
+	return cleanLineComments(lines);
+}
+
+function cleanBlock(body: string): string | undefined {
+	const lines = body.split('\n').map(line =>
+		line
+			.replace(/^[ \t]*\*+[ \t]?/, '')
+			.replace(/[ \t]+$/, '')
+	);
+	return capDoc(dropBlankEdges(lines).join('\n').trim());
+}
+
+function cleanLineComments(lines: string[]): string | undefined {
+	return capDoc(
+		lines
+			.map(line => line.replace(/^[ \t]*\/\/[/!]?[ \t]?/, '').replace(/[ \t]+$/, ''))
+			.join('\n')
+			.trim()
+	);
+}
+
+function dropBlankEdges(lines: string[]): string[] {
+	let start = 0;
+	let end = lines.length;
+	while (start < end && lines[start].trim() === '') start++;
+	while (end > start && lines[end - 1].trim() === '') end--;
+	return lines.slice(start, end);
+}
+
+function capDoc(doc: string): string | undefined {
+	if (!doc) return undefined;
+	return doc.length > DOC_LIMIT ? `${doc.slice(0, DOC_LIMIT).trimEnd()}…` : doc;
 }
 
 function declare(state: WalkState, info: SymbolInfo, path: string | null): void {
@@ -1375,7 +1592,7 @@ function chooseFunctionTarget(
 	const location = symbol.location;
 	const symbolPath = location?.filename ?? path;
 	if (!location || !symbolPath) return null;
-	const info = describe(symbol, sourceName(symbol.name), 'function', 'file', symbolPath, texts, location, true);
+	const info = describe(state, symbol, sourceName(symbol.name), 'function', 'file', symbolPath, texts, location, true);
 	if (!info) return null;
 	const parameters = declaredParameters(symbol);
 	if (parameters) info.parameters = parameters;

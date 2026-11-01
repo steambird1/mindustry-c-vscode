@@ -152,6 +152,20 @@ export interface SymbolInfo {
 	/** Character offset of the declaration's name within `path`. */
 	declarationOffset: number;
 	/**
+	 * Markdown extracted from the comment block directly above the declaration.
+	 *
+	 * Comments are not in the AST, so they are read from the source at index
+	 * time (including headers) and carried as plain text.
+	 */
+	doc?: string;
+	/**
+	 * The first declaration when it is not the definition: a function prototype
+	 * or a struct/union forward declaration. `path`/`range` stay on the
+	 * definition (for functions) or the complete type, so "go to declaration"
+	 * and "go to definition" answer different questions.
+	 */
+	declaration?: { path: string; range: Range };
+	/**
 	 * For a field, the struct or union that declares it.
 	 *
 	 * Carried because the compiler's `MemberExpression` throws the member's
@@ -196,6 +210,8 @@ export interface StructInfo {
 		/** Character offset of the member's name within `path`. */
 		offset: number;
 		bitField?: string;
+		/** Comment block directly above the member, as Markdown. */
+		doc?: string;
 	}>;
 }
 

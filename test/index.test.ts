@@ -19,6 +19,7 @@
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { before, describe, it } from 'node:test';
 
@@ -26,6 +27,7 @@ import { capabilities } from '../src/compiler/bridge';
 import { analyse, type AnalysisHost } from '../src/compiler/analysis';
 import {
 	complete,
+	declaration,
 	definition,
 	hover,
 	isReservedName,
@@ -474,10 +476,11 @@ int main(void) {
 		assert.match(red?.contents ?? '', /RED/);
 	});
 
-	it('indexes a struct forward declaration without inventing members', async () => {
+	it('separates a forward declaration from its definition', async () => {
 		const FORWARD = `struct later;
 struct later *p;
-int main(void) { return 0; }
+struct later { int x; };
+int main(void) { struct later q; q.x = 1; return 0; }
 `;
 		const response = await analyse(request(FORWARD), host);
 		assert.deepEqual(
@@ -489,10 +492,26 @@ int main(void) { return 0; }
 		const index = response.index;
 		const document: IndexedDocument = { uri: URI, index, text: FORWARD, mainPath: PATH };
 
-		assert.equal(index.symbols.find(symbol => symbol.name === 'later')?.type, 'struct');
-		assert.equal(index.structs.find(struct => struct.name === 'later'), undefined);
+		const tagAt = FORWARD.indexOf('struct later *p') + 7;
+		const defined = definition(document, positionIn(FORWARD, tagAt), toUri);
+		assert.ok(defined, 'no definition for the forward-declared type');
+		assert.equal(defined.range.start.line, 2, 'definition did not go to the complete type');
 
-		const shown = hover(document, positionIn(FORWARD, FORWARD.indexOf('struct later *p') + 7));
+		const declared = declaration(document, positionIn(FORWARD, tagAt), toUri);
+		assert.ok(declared, 'no declaration for the forward-declared type');
+		assert.equal(declared.range.start.line, 0, 'declaration did not go to the forward');
+
+		assert.deepEqual(
+			index.structs.find(struct => struct.name === 'later')?.members.map(member => member.name),
+			['x']
+		);
+		assert.equal(
+			outline(document, PATH).filter(symbol => symbol.name === 'later').length,
+			1,
+			'the outline listed the forward and the definition'
+		);
+
+		const shown = hover(document, positionIn(FORWARD, tagAt));
 		assert.match(shown?.contents ?? '', /struct later/);
 	});
 
@@ -589,6 +608,18 @@ int main(void) { return add(1, 2); }
 		const found = references([document], document, call, toUri);
 		assert.equal(found.length, 3, 'expected the prototype, the definition and the call');
 		assert.ok(found.some(location => location.range.start.line === 0), 'the prototype is not a reference');
+
+		// `definition` is the body; `declaration` is the prototype, from either end.
+		const defined = definition(document, call, toUri);
+		assert.equal(defined?.range.start.line, 1, 'definition did not go to the body');
+		const declared = declaration(document, call, toUri);
+		assert.equal(declared?.range.start.line, 0, 'declaration did not go to the prototype');
+		const fromBody = declaration(
+			document,
+			positionIn(PROTO, PROTO.indexOf('add(int a, int b) {')),
+			toUri
+		);
+		assert.equal(fromBody?.range.start.line, 0, 'declaration from the body missed the prototype');
 
 		const edit = rename([document], document, call, 'plus', toUri);
 		assert.ok(edit, 'rename produced no edit');
@@ -966,6 +997,111 @@ int main(void) {
 			targetVersion: 149,
 		});
 		assert.equal(older.length, 3, 'string_view offered below v150');
+	});
+});
+
+describe('documentation comments', () => {
+	const DOCS = `/** Adds two numbers. */
+int add(int a, int b);
+int add(int a, int b) { return a + b; }
+
+// A point in the plane.
+struct point {
+	// horizontal
+	int x;
+	/* vertical */
+	int y;
+};
+
+// A counter.
+int counter;
+
+// A number.
+typedef int number;
+
+/** The colours. */
+enum colour { RED, GREEN };
+
+int main(void) {
+	struct point p;
+	p.x = 1;
+	return add(counter, p.x);
+}
+`;
+
+	const indexed = async (source: string): Promise<IndexedDocument> => {
+		const response = await analyse(request(source), host);
+		assert.deepEqual(
+			response.diagnostics.map(diagnostic => diagnostic.message),
+			[],
+			'the documentation fixture must analyse cleanly'
+		);
+		assert.ok(response.index, 'no index for the documentation fixture');
+		return { uri: URI, index: response.index, text: source, mainPath: PATH };
+	};
+
+	it('shows the comment above a function, variable, type and member', async () => {
+		const document = await indexed(DOCS);
+		const at = (needle: string, offset = 0) =>
+			positionIn(DOCS, DOCS.indexOf(needle) + offset);
+
+		assert.match(hover(document, at('add(counter'))?.contents ?? '', /Adds two numbers\./);
+		assert.match(hover(document, at('add(counter', 4))?.contents ?? '', /A counter\./);
+		assert.match(hover(document, at('counter;'))?.contents ?? '', /A counter\./);
+		assert.match(hover(document, at('struct point', 7))?.contents ?? '', /A point in the plane\./);
+		assert.match(hover(document, at('p.x', 2))?.contents ?? '', /horizontal/);
+		assert.match(hover(document, at('y;'))?.contents ?? '', /vertical/);
+		assert.match(hover(document, at('number;'))?.contents ?? '', /A number\./);
+		assert.match(hover(document, at('enum colour', 5))?.contents ?? '', /The colours\./);
+	});
+
+	it('carries the comment into completion and signature help', async () => {
+		const document = await indexed(DOCS);
+		const offset = DOCS.indexOf('return add');
+		const items = complete(document, positionIn(DOCS, offset));
+		assert.equal(items.find(item => item.label === 'counter')?.documentation, 'A counter.');
+		assert.equal(items.find(item => item.label === 'add')?.documentation, 'Adds two numbers.');
+
+		const members = complete(document, positionIn(DOCS, DOCS.indexOf('p.x') + 2));
+		assert.equal(members.find(item => item.label === 'x')?.documentation, 'horizontal');
+
+		const help = signatureHelp(document, positionIn(DOCS, DOCS.indexOf('add(counter') + 4));
+		assert.equal(help?.signatures[0].documentation, 'Adds two numbers.');
+	});
+
+	it('reads the comment from an included header', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindc-doc-'));
+		fs.writeFileSync(path.join(dir, 'lib.h'), '/** Doubles the value. */\nint twice(int x) { return x * 2; }\n');
+		try {
+			const MAIN = '#include "lib.h"\nint main(void) { return twice(2); }\n';
+			const response = await analyse(
+				{ ...request(MAIN), includePaths: [dir] },
+				{
+					readFile: target => {
+						try {
+							return fs.readFileSync(target, 'utf8');
+						} catch {
+							return null;
+						}
+					},
+					pathOf: () => PATH,
+				}
+			);
+			assert.deepEqual(response.diagnostics.map(diagnostic => diagnostic.message), []);
+			assert.ok(response.index);
+			const document: IndexedDocument = { uri: URI, index: response.index, text: MAIN, mainPath: PATH };
+			const shown = hover(document, positionIn(MAIN, MAIN.indexOf('twice(2)')));
+			assert.match(shown?.contents ?? '', /Doubles the value\./);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('does not borrow a comment from another declaration', async () => {
+		const DOCS = '// Not for b.\nint a;\nint b;\n';
+		const document = await indexed(DOCS);
+		const shown = hover(document, positionIn(DOCS, DOCS.indexOf('b;')));
+		assert.doesNotMatch(shown?.contents ?? '', /Not for b\./);
 	});
 });
 

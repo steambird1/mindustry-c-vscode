@@ -39,6 +39,7 @@ import type { AnalysisResponse, CompilerDiagnostic, EffectiveConfig } from '../s
 import {
 	canRename,
 	complete,
+	declaration,
 	definition,
 	hover,
 	offsetOf,
@@ -154,6 +155,7 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
 			textDocumentSync: { openClose: true, change: 1 },
 			hoverProvider: true,
 			definitionProvider: true,
+		declarationProvider: true,
 			referencesProvider: true,
 			renameProvider: { prepareProvider: true },
 			completionProvider: { triggerCharacters: ['.', '@'], resolveProvider: false },
@@ -493,6 +495,11 @@ connection.onHover((params: TextDocumentPositionParams) => {
 connection.onDefinition(params => {
 	const entry = indexed(params.textDocument.uri);
 	return entry ? definition(entry, params.position, toUri) : null;
+});
+
+connection.onDeclaration(params => {
+	const entry = indexed(params.textDocument.uri);
+	return entry ? declaration(entry, params.position, toUri) : null;
 });
 
 connection.onReferences(params => {
