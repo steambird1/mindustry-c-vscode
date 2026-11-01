@@ -496,6 +496,55 @@ int main(void) { return 0; }
 		assert.match(shown?.contents ?? '', /struct later/);
 	});
 
+	it('collects enums declared in struct and union member lists', async () => {
+		const MEMBERS = `enum Mode { M1, M2 };
+struct Config { enum Mode mode; enum Level { L1, L2 } level; int value; };
+union Shape { enum Kind { K1 } kind; int raw; };
+int main(void) {
+	struct Config c;
+	c.mode = M1;
+	c.level = L1;
+	c.value = c.mode + c.level;
+	union Shape s;
+	s.kind = K1;
+	s.raw = 0;
+	return c.value + s.kind + s.raw;
+}
+`;
+		const response = await analyse(request(MEMBERS), host);
+		assert.deepEqual(
+			response.diagnostics.map(diagnostic => diagnostic.message),
+			[],
+			'enums inside member lists must analyse cleanly'
+		);
+		assert.ok(response.index, 'no index for the enum-member fixture');
+		const index = response.index;
+		const document: IndexedDocument = { uri: URI, index, text: MEMBERS, mainPath: PATH };
+
+		const labels = new Set(
+			complete(document, positionIn(MEMBERS, MEMBERS.indexOf('return c.value'))).map(
+				item => item.label
+			)
+		);
+		for (const name of ['M1', 'M2', 'L1', 'L2', 'K1', 'Mode', 'Level', 'Kind']) {
+			assert.ok(labels.has(name), `${name} is missing from completion`);
+		}
+
+		const config = index.structs.find(struct => struct.name === 'Config');
+		assert.deepEqual(config?.members.map(member => member.name), ['mode', 'level', 'value']);
+		const shape = index.structs.find(struct => struct.name === 'Shape');
+		assert.deepEqual(shape?.members.map(member => member.name), ['kind', 'raw']);
+
+		const found = definition(
+			document,
+			positionIn(MEMBERS, MEMBERS.indexOf('c.level = L1') + 'c.level = '.length),
+			toUri
+		);
+		assert.ok(found, 'the inline enumerator does not go to its declaration');
+		const start = offsetOf(MEMBERS, found.range.start);
+		assert.equal(MEMBERS.slice(start, start + 'L1'.length), 'L1');
+	});
+
 	it('indexes a block-scope enum', async () => {
 		const LOCAL = `int main(void) {
 	enum local_e { LOCAL_A, LOCAL_B };

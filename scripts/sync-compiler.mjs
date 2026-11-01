@@ -180,7 +180,11 @@ function runCheck() {
 	console.log('\n== npm run check ==\n');
 	if (!shell('npm run check')) {
 		console.error(`
-Check failed. What it usually means:
+The sync itself succeeded: the compiler is at ${displayHead(head())} with the
+patches applied. Only the check above failed -- nothing was versioned or
+packaged. The failing step is the last "> npm run ..." line printed above.
+
+What it usually means:
 
   gen:check       the compiler's keyword/instruction/content tables changed.
                   Run \`npm run gen\`, review the diff under syntaxes/ and

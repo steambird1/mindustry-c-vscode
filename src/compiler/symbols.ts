@@ -535,6 +535,15 @@ function collectTypeDefinitions(
 			collectStruct(node as AstNode, keyword, mainPath, texts, state);
 			continue;
 		}
+		/*
+		 * `2de1372` put standalone enums in the same source-ordered list as
+		 * structs and typedefs (the separate `enumDefinitions` array is gone),
+		 * so they arrive here as a `TypeSpecifier` with `typeName === 'enum'`.
+		 */
+		if (keyword === 'TypeSpecifier' && asName(node.typeName) === 'enum') {
+			collectEnum(node as AstNode, mainPath, texts, state, program.scope ?? null);
+			continue;
+		}
 		if (!Array.isArray(node.declarators)) continue;
 
 		/*
@@ -765,6 +774,22 @@ function collectStruct(
 		if (memberOffset < 0) continue;
 
 		const type = memberTypeText(name, memberName, member, state);
+
+		/*
+		 * `struct S { enum Color { ... } c; };` -- the member list is the only
+		 * place this definition exists, and `typeDefinitions` (where the walk
+		 * would have seen it) is skipped by design. Register the enum before
+		 * the member is used anywhere.
+		 */
+		const specifier = member.type as AstNode | undefined;
+		if (
+			specifier &&
+			specifier.typeName === 'enum' &&
+			specifier.getAttribute?.('enumValues')
+		) {
+			collectEnum(specifier, path, texts, state, node.scope ?? null, local, owner);
+		}
+
 		// A member is a declaration like any other: it gets a symbol of its own so
 		// that find-references and rename work from inside the struct body, not
 		// only from a use. `symbols` holds it for the same reason, though the

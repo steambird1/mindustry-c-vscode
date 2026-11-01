@@ -354,8 +354,10 @@ One gap once recorded here is closed upstream as of `b3c3a30`: `for (int i = 0;
 against the synced compiler; the extension needed no change for it.
 
 `enum` also left this list in `2e5c2e8`: tags, enumerators and `typedef enum`
-work. The index reads the parser's `enumDefinitions` and the `enumValues`
-attribute; the old typedef-name quirk above still applies to the alias.
+work. `2de1372` moved standalone enums into the source-ordered
+`typeDefinitions` list (the separate `enumDefinitions` array is gone), and an
+enum declared inside a member list is read from that member's type. The old
+typedef-name quirk above still applies to the alias.
 
 ### Prototypes, enums and typedef structs
 
@@ -369,9 +371,12 @@ these quirks rather than patching them into the compiler:
   prototype that was removed outright (a header declaration) is rebuilt from
   the symbol's location the first time its name is used.
 - **Enums** keep their tag in a `TypeSpecifier` attribute, not in the program
-  scope. `enumDefinitions` holds standalone definitions; enumerators are
-  ordinary `int` constants in the surrounding scope. Both are indexed so
-  completion, hover and go-to-definition work, including block-scope enums.
+  scope. Since `2de1372` they sit in `typeDefinitions` in source order, so a
+  struct declared later can use an earlier tag; an enum declared inside a member
+  list (`struct S { enum Color { ... } c; }`) is read from that member's type,
+  because `typeDefinitions` is skipped by the walk. Enumerators are ordinary
+  `int` constants in the surrounding scope. Both are indexed so completion,
+  hover and go-to-definition work, including block-scope enums.
 - **`typedef struct`** attaches the body to the typedef node as
   `structDefinition`. An anonymous body gets a synthetic tag
   (`__anon_struct_N`), which is replaced by the alias in rendered types
