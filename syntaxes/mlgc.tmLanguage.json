@@ -203,7 +203,7 @@
 			"patterns": [
 				{
 					"name": "support.function.builtin.mlgc",
-					"match": "\\b(printflush|drawflush|printchar|stricteq|ucontrol|vecalias|control|getlink|ulocate|byname|format|lookup|memcpy|remote|sensor|uradar|veccpy|adiff|floor|memsp|print|radar|ubind|write|acos|asin|atan|ceil|draw|jump|rand|read|sqrt|stop|wait|abs|asm|cos|end|max|min|pow|set|sin|tan|op)\\b(?=\\s*\\()"
+					"match": "\\b(printflush|drawflush|printchar|stricteq|ucontrol|vecalias|control|getlink|ulocate|assert|byname|format|lookup|memcpy|printf|remote|sensor|uradar|veccpy|adiff|floor|memsp|print|radar|ubind|write|acos|asin|atan|ceil|draw|jump|rand|read|sqrt|stop|wait|abs|asm|cos|end|max|min|pow|set|sin|tan|op)\\b(?=\\s*\\()"
 				}
 			]
 		},

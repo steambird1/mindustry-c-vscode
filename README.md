@@ -23,6 +23,10 @@ Logic (`mlog`).
   `string_t`, a `char[]` copy, or `string_view` via `sv_of_string`). The
   compiler's headers ship with the extension, so `#include <string.h>` resolves
   out of the box.
+- **Modern C declarations indexed**: `enum`, `typedef struct`, struct/union
+  forward declarations, function prototypes, block-scope types and bitfields
+  complete and navigate; `printf`, `assert`, `stdbool.h` and `stdio.h` come
+  from the compiler's own headers.
 
 ## Hello, World
 

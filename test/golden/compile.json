@@ -1,5 +1,5 @@
 {
-	"compiler": "84e6467",
+	"compiler": "a8d820a",
 	"files": {
 		"sample1.c": {
 			"success": true,
@@ -13,7 +13,7 @@
 		},
 		"test1.c": {
 			"success": true,
-			"hash": "4dca8d8bee8d",
+			"hash": "f59a164b1bbc",
 			"lines": 162,
 			"errors": [],
 			"warnings": [
@@ -160,7 +160,7 @@
 		},
 		"test1a.c": {
 			"success": true,
-			"hash": "e1c044e92114",
+			"hash": "0746e4833b82",
 			"lines": 140,
 			"errors": [],
 			"warnings": [],
@@ -192,8 +192,8 @@
 		},
 		"test2.c": {
 			"success": true,
-			"hash": "2d4481732c99",
-			"lines": 30,
+			"hash": "2b49554a8ca3",
+			"lines": 74,
 			"errors": [],
 			"warnings": [],
 			"fatal": null

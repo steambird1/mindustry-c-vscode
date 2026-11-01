@@ -335,10 +335,9 @@ silently:
   nothing, so a reintroduction fails there rather than in the editor.
 - **A typedef's name is not in the program scope.** `scope.lookup('myint')`
   returns `null` even though `myint` resolves everywhere else, so a typedef's
-  type is read out of the text between the `typedef` keyword and the name.
-- **The dialect has no `enum`.** `enum colour { red, green };` is a parse error
-  (`Expected variable name in declaration`). Still true in the bundled compiler
-  (`9e399f4`).
+  type is read out of the text between the `typedef` keyword and the name. This
+  is still true for `typedef struct ... point_t`; the alias is recovered from the
+  declaration, not the scope.
 - **`@`-constants parse as identifiers named after the sigil** (`@copper`), with
   no symbol. They are left out of the index — indexing them unresolved would
   make hover claim a perfectly valid content id is undeclared — and answered from
@@ -353,6 +352,38 @@ silently:
 One gap once recorded here is closed upstream as of `b3c3a30`: `for (int i = 0;
 …)` parses and compiles, empty clauses (`for (; t < 3; t++)`) included. Re-checked
 against the synced compiler; the extension needed no change for it.
+
+`enum` also left this list in `2e5c2e8`: tags, enumerators and `typedef enum`
+work. The index reads the parser's `enumDefinitions` and the `enumValues`
+attribute; the old typedef-name quirk above still applies to the alias.
+
+### Prototypes, enums and typedef structs
+
+The declaration layer changed a lot in `84e6467..a8d820a`, and the index bridges
+these quirks rather than patching them into the compiler:
+
+- **Prototypes** are removed from `Program.functions` after analysis, yet a
+  prototype can remain reachable in the walk, and the shared `SymbolEntry`
+  keeps the first declaration's location — often the prototype. Definitions are
+  collected once, every use/reference/rename points at the definition, and a
+  prototype that was removed outright (a header declaration) is rebuilt from
+  the symbol's location the first time its name is used.
+- **Enums** keep their tag in a `TypeSpecifier` attribute, not in the program
+  scope. `enumDefinitions` holds standalone definitions; enumerators are
+  ordinary `int` constants in the surrounding scope. Both are indexed so
+  completion, hover and go-to-definition work, including block-scope enums.
+- **`typedef struct`** attaches the body to the typedef node as
+  `structDefinition`. An anonymous body gets a synthetic tag
+  (`__anon_struct_N`), which is replaced by the alias in rendered types
+  (`point_t p`, not `__anon_struct_2 p`); a named tag keeps its own name.
+  Member completion uses an entry under the alias.
+- **Forward declarations** (`struct later;`) are type symbols without members;
+  a pointer to one resolves and hovers, but offers no members until a
+  definition is seen.
+- **Block-scope types** (`struct`/`typedef`/`enum` inside a function) are
+  indexed when the walk reaches them. The index has no block ranges, so two
+  types with the same name shadow each other in completion; hover and
+  references still use the resolved analyser type.
 
 ### Known limitation: which file a diagnostic belongs to
 
@@ -449,4 +480,7 @@ in the grammar and in completion after `npm run gen` with no hand-editing.
 `scripts/build.mjs` also copies the compiler's `include/` directory to
 `out/include`, which is what makes `#include <string.h>` resolve in an installed
 extension. The directory is searched after the user's `includePaths`, so a
-project's own header of the same name wins.
+project's own header of the same name wins. `stdio.h`, `assert.h` and
+`stdbool.h` arrive the same way; `printf` and `assert` are in the analyser's
+builtin table, so `npm run gen` puts them into completion, hover and signature
+help along with the vocabulary they belong to.

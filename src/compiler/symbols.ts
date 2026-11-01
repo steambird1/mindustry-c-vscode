@@ -64,6 +64,8 @@ interface AstNode {
 	/** TypeInfo, set by the semantic analyser on expressions. */
 	dataType?: TypeInfo | null;
 	scope?: AstScope | null;
+	/** Compiler attribute bag (`getAttribute`/`setAttribute` on every node). */
+	getAttribute?(key: string): unknown;
 	name?: unknown;
 	typeName?: unknown;
 	children?: unknown[];
@@ -74,6 +76,13 @@ interface AstNode {
 	/** Set on function declarations. */
 	returnType?: AstNode;
 	parameters?: AstNode[];
+	body?: unknown;
+	/** Set on standalone enum definitions. */
+	enumDefinitions?: AstNode[];
+	/** Set on typedefs that carry their struct/union/enum body inline. */
+	structDefinition?: AstNode;
+	isTypedef?: boolean;
+	isForward?: boolean;
 	/** Set on struct and union definitions. */
 	members?: AstNode[];
 	/** Set on typedefs, and on variable declaration statements. */
@@ -437,6 +446,22 @@ interface WalkState {
 	structTypes: Map<string, TypeInfo>;
 	/** Named types (structs, unions, typedefs), for uses of a custom type. */
 	typeSymbols: Map<string, SymbolInfo>;
+	/**
+	 * Function definitions, keyed by the analyser's symbol entry.
+	 *
+	 * A prototype and its definition share one entry, and the entry's location
+	 * is the first declaration -- often the prototype. Uses and the prototype
+	 * are pointed at this definition instead.
+	 */
+	functionTargets: Map<object, SymbolInfo>;
+	/**
+	 * Synthetic names to drop from rendered types.
+	 *
+	 * `typedef struct { ... } point_t` gets an internal tag (`__anon_struct_N`)
+	 * from the compiler; the alias is the name the user wrote and the one the
+	 * rest of the editor should show.
+	 */
+	typeRenames: Map<string, string>;
 	/** Declarations the type pre-pass has already recorded. */
 	claimed: WeakSet<object>;
 }
@@ -450,13 +475,27 @@ export function buildDocumentIndex(input: IndexInput): DocumentIndex {
 		memberDeclarations: new Map(),
 		structTypes: new Map(),
 		typeSymbols: new Map(),
+		functionTargets: new Map(),
+		typeRenames: new Map(),
 		claimed: new WeakSet(),
 	};
 
 	if (input.ast) {
 		const program = input.ast as AstNode;
 		collectTypeDefinitions(program, input.mainPath, texts, state);
+		collectFunctions(program, input.mainPath, texts, state);
 		walk(program, input.mainPath, texts, state, program.scope ?? null, false, null, new WeakSet());
+	}
+
+	// Type rendering happens while walking, but the alias map is only complete
+	// once every typedef has been seen. Rewriting the finished strings keeps the
+	// renderer free of state and cannot touch a name the user wrote.
+	if (state.typeRenames.size) {
+		for (const symbol of state.symbols) {
+			for (const [internal, shown] of state.typeRenames) {
+				if (symbol.type.includes(internal)) symbol.type = symbol.type.replaceAll(internal, shown);
+			}
+		}
 	}
 
 	state.references.sort((a, b) => a.offset - b.offset);
@@ -494,9 +533,164 @@ function collectTypeDefinitions(
 		const keyword = nodeType(node);
 		if (keyword === 'struct' || keyword === 'union') {
 			collectStruct(node as AstNode, keyword, mainPath, texts, state);
-		} else if (Array.isArray(node.declarators)) {
-			collectTypedef(node as AstNode, mainPath, texts, state);
+			continue;
 		}
+		if (!Array.isArray(node.declarators)) continue;
+
+		/*
+		 * A typedef can carry its struct/union/enum body inline. The body's tag
+		 * is real for `typedef struct point { ... } point_t`, synthetic
+		 * (`__anon_struct_N`) for the anonymous form -- and the alias is the
+		 * only name the user can use there.
+		 */
+		const specifier = node.type as AstNode | undefined;
+		const specKeyword = asName(specifier?.typeName);
+		if (specKeyword === 'enum' && specifier) {
+			collectEnum(specifier, mainPath, texts, state, program.scope ?? null);
+		}
+		if ((specKeyword === 'struct' || specKeyword === 'union') && node.structDefinition) {
+			const tag = asName((node.structDefinition as AstNode).name);
+			const anonymous = !tag || tag.startsWith('__anon_');
+			collectStruct(
+				node.structDefinition as AstNode,
+				specKeyword,
+				mainPath,
+				texts,
+				state,
+				anonymous ? firstAliasName(node) : null
+			);
+		}
+		collectTypedef(node as AstNode, mainPath, texts, state);
+	}
+
+	/*
+	 * A standalone `enum Tag { ... };` is not in `typeDefinitions`; the parser
+	 * keeps it on `enumDefinitions`. It has to be collected up front so a use
+	 * that precedes the definition in the walk still links.
+	 */
+	for (const node of Array.isArray(program.enumDefinitions) ? program.enumDefinitions : []) {
+		if (node && typeof node === 'object') {
+			collectEnum(node as AstNode, mainPath, texts, state, program.scope ?? null);
+		}
+	}
+}
+
+function firstAliasName(node: AstNode): string | null {
+	const first = Array.isArray(node.declarators) ? node.declarators[0] : null;
+	return first && typeof first === 'object' ? asName((first as AstNode).name) : null;
+}
+
+/**
+ * `enum Tag { A, B };`
+ *
+ * The compiler keeps the tag in a `TypeSpecifier` attribute rather than in the
+ * scope, so the index has to make both the type and its enumerators nameable.
+ * Enumerators are ordinary `int` constants in C and are treated as such.
+ */
+function collectEnum(
+	node: AstNode,
+	mainPath: string | null,
+	texts: FileText,
+	state: WalkState,
+	scope: AstScope | null,
+	local: 'file' | 'local' = 'file',
+	owner: string | null = null
+): void {
+	if (state.claimed.has(node)) return;
+	state.claimed.add(node);
+	const location = node.location;
+	if (!location) return;
+	const path = location.filename ?? mainPath;
+	if (!path) return;
+
+	const enumName = asName(node.getAttribute?.('enumName'));
+	// `__enum_N` is the compiler's name for a body with no tag.
+	if (enumName && !enumName.startsWith('__')) {
+		const start = texts.offset(path, location.line, location.column, location.index);
+		const written = /^(?:enum)\s+([A-Za-z_]\w*)/.exec(texts.text(path).slice(start, start + 128));
+		if (written) {
+			const offset = start + written[0].length - written[1].length;
+			const symbol: SymbolInfo = {
+				kind: 'type',
+				name: written[1],
+				type: 'enum',
+				scope: local,
+				path,
+				range: texts.range(path, offset, written[1].length),
+				declarationOffset: offset,
+				...(local === 'local' && owner ? { owner } : {}),
+			};
+			state.symbols.push(symbol);
+			state.references.push({
+				path,
+				range: symbol.range,
+				offset,
+				isDeclaration: true,
+				target: symbol,
+			});
+			state.typeSymbols.set(written[1], symbol);
+		}
+	}
+
+	const values = node.getAttribute?.('enumValues');
+	if (!Array.isArray(values)) return;
+	for (const raw of values) {
+		if (!raw || typeof raw !== 'object') continue;
+		const entry = raw as { name?: unknown; location?: AstLocation };
+		const name = asName(entry.name);
+		if (!name || !entry.location) continue;
+		const entryPath = entry.location.filename ?? path;
+		const offset = nameOffset(texts, entryPath, entry.location, name, false);
+		if (offset < 0) continue;
+		const declared = callLookup(scope, name);
+		const info: SymbolInfo = {
+			kind: 'variable',
+			name,
+			type: declared ? renderSymbolType(declared.type, declared) : 'int',
+			scope: local,
+			path: entryPath,
+			range: texts.range(entryPath, offset, name.length),
+			declarationOffset: offset,
+			...(local === 'local' && owner ? { owner } : {}),
+		};
+		state.symbols.push(info);
+		state.references.push({
+			path: entryPath,
+			range: info.range,
+			offset,
+			isDeclaration: true,
+			target: info,
+		});
+	}
+}
+
+/**
+ * Every function definition, collected up front.
+ *
+ * A prototype and its definition share one `SymbolEntry`, whose `location` is
+ * the first declaration -- usually the prototype. Walking in source order would
+ * index the prototype as a second function and leave the definition out of
+ * every reference/rename, so definitions are collected here and prototypes are
+ * linked to them.
+ */
+function collectFunctions(
+	program: AstNode,
+	mainPath: string | null,
+	texts: FileText,
+	state: WalkState
+): void {
+	for (const node of Array.isArray(program.functions) ? program.functions : []) {
+		if (!node || typeof node !== 'object' || !node.body || !node.location) continue;
+		const name = asName(node.name);
+		const path = node.location.filename ?? mainPath;
+		if (!name || !path) continue;
+		const entry = resolveSymbol(node, name, node.scope ?? null);
+		const info = describe(entry, sourceName(name), 'function', 'file', path, texts, node.location, true);
+		if (!info) continue;
+		info.parameters = renderParameters(node, path, texts);
+		declare(state, info, path);
+		if (entry) state.functionTargets.set(entry, info);
+		state.claimed.add(node);
 	}
 }
 
@@ -505,40 +699,58 @@ function collectStruct(
 	keyword: 'struct' | 'union',
 	mainPath: string | null,
 	texts: FileText,
-	state: WalkState
-): void {
+	state: WalkState,
+	/**
+	 * The alias to show instead of the compiler's synthetic tag, for
+	 * `typedef struct { ... } name;`. Null exposes the tag itself.
+	 */
+	alias: string | null = null,
+	local: 'file' | 'local' = 'file',
+	owner: string | null = null
+): StructInfo | null {
 	const name = asName(node.name);
-	if (!name || !node.location) return;
+	if (!name || !node.location) return null;
 	const path = node.location.filename ?? mainPath;
-	if (!path) return;
+	if (!path) return null;
 	state.claimed.add(node);
 
-	const offset = nameOffset(texts, path, node.location, name, false);
-	if (offset < 0) return;
+	const expose = alias === null;
+	const shownName = alias ?? name;
+	const start = texts.offset(path, node.location.line, node.location.column, node.location.index);
+	const offset = expose ? nameOffset(texts, path, node.location, name, false) : -1;
+	if (expose && offset < 0) return null;
 
-	const symbol: SymbolInfo = {
-		kind: 'type',
-		name,
-		type: keyword,
-		scope: 'file',
-		path,
-		range: texts.range(path, offset, name.length),
-		declarationOffset: offset,
-	};
-	state.symbols.push(symbol);
-	state.references.push({
-		path,
-		range: symbol.range,
-		offset,
-		isDeclaration: true,
-		target: symbol,
-	});
-	state.typeSymbols.set(name, symbol);
+	if (expose) {
+		const symbol: SymbolInfo = {
+			kind: 'type',
+			name,
+			type: keyword,
+			scope: local,
+			path,
+			range: texts.range(path, offset, name.length),
+			declarationOffset: offset,
+			...(local === 'local' && owner ? { owner } : {}),
+		};
+		state.symbols.push(symbol);
+		state.references.push({
+			path,
+			range: symbol.range,
+			offset,
+			isDeclaration: true,
+			target: symbol,
+		});
+		state.typeSymbols.set(name, symbol);
+	}
 
-	// The analyser resolves the struct's own type into the program scope, which
-	// gives every member a rendered type without reading the declaration back.
+	// The analyser resolves the struct's own type into the scope, which gives
+	// every member a rendered type without reading the declaration back.
 	const resolved = lookupType(node, name);
-	if (resolved) state.structTypes.set(name, resolved);
+	if (resolved) {
+		state.structTypes.set(name, resolved);
+		if (alias) state.structTypes.set(alias, resolved);
+	}
+	// `typedef struct { ... } point_t` must not surface `__anon_struct_N`.
+	if (alias && name.startsWith('__anon_')) state.typeRenames.set(name, alias);
 
 	const members: StructInfo['members'] = [];
 	for (const memberNode of Array.isArray(node.members) ? node.members : []) {
@@ -562,11 +774,12 @@ function collectStruct(
 			kind: 'field',
 			name: memberName,
 			type,
-			scope: 'file',
+			scope: local,
 			path: memberPath,
 			range: texts.range(memberPath, memberOffset, memberName.length),
 			declarationOffset: memberOffset,
-			container: name,
+			container: shownName,
+			...(local === 'local' && owner ? { owner } : {}),
 		};
 		state.memberDeclarations.set(`${name} ${memberName}`, {
 			path: memberPath,
@@ -589,8 +802,15 @@ function collectStruct(
 		});
 	}
 
-	if (!members.length) return;
-	state.structs.push({ name, path, range: symbol.range, members });
+	if (!members.length) return null;
+	const info: StructInfo = {
+		name: shownName,
+		path,
+		range: expose ? texts.range(path, offset, name.length) : texts.range(path, start, 1),
+		members,
+	};
+	state.structs.push(info);
+	return info;
 }
 
 /**
@@ -671,13 +891,18 @@ function collectTypedef(
 	node: AstNode,
 	mainPath: string | null,
 	texts: FileText,
-	state: WalkState
+	state: WalkState,
+	local: 'file' | 'local' = 'file',
+	owner: string | null = null
 ): void {
 	if (!node.location) return;
 	const path = node.location.filename ?? mainPath;
 	if (!path) return;
+	state.claimed.add(node);
 	const declaredAt = texts.offset(path, node.location.line, node.location.column, node.location.index);
 	const text = texts.text(path);
+	const specifier = node.type as AstNode | undefined;
+	const specKeyword = asName(specifier?.typeName);
 
 	for (const declarator of node.declarators ?? []) {
 		if (!declarator || typeof declarator !== 'object') continue;
@@ -691,21 +916,29 @@ function collectTypedef(
 		const offset = nameOffset(texts, aliasPath, location, name, false);
 		if (offset < 0) continue;
 
-		// The type specifier only records `struct` for `typedef struct point p`,
-		// so the declared type is read out of the text between the keyword and
-		// the name, which is exactly what the user wrote.
-		const base = text
-			.slice(declaredAt + TYPEDEF_KEYWORD.length, offset)
-			.replace(/\s+/g, ' ')
-			.trim();
+		const written = text.slice(declaredAt + TYPEDEF_KEYWORD.length, offset);
+		/*
+		 * The type specifier records only the keyword for `struct`/`union`/
+		 * `enum`, so the tag is read from the text the user wrote. Slicing the
+		 * whole declaration would also copy the body (`struct point { int x; }`
+		 * for an inline definition).
+		 */
+		let base: string;
+		if (specKeyword === 'struct' || specKeyword === 'union' || specKeyword === 'enum') {
+			const tag = /^\s*(?:struct|union|enum)\s+([A-Za-z_]\w*)/.exec(written)?.[1] ?? '';
+			base = tag ? `${specKeyword} ${tag}` : specKeyword;
+		} else {
+			base = written.replace(/\s+/g, ' ').trim();
+		}
 		const symbol: SymbolInfo = {
 			kind: 'type',
 			name,
 			type: base ? `typedef ${base}` : 'typedef',
-			scope: 'file',
+			scope: local,
 			path: aliasPath,
 			range: texts.range(aliasPath, offset, name.length),
 			declarationOffset: offset,
+			...(local === 'local' && owner ? { owner } : {}),
 		};
 		state.symbols.push(symbol);
 		state.references.push({
@@ -802,20 +1035,51 @@ function visit(
 	// `struct point *p`, a parameter's type. The analyser resolves the type but
 	// leaves the node without a symbol, so it is linked through the pre-pass.
 	if (type === 'TypeSpecifier') {
-		visitTypeSpecifier(node, path, texts, state);
+		visitTypeSpecifier(node, path, texts, state, scope, local, owner);
+		return;
+	}
+
+	// A type definition inside a block is not in `Program.typeDefinitions`;
+	// the walk is the only place it appears.
+	if ((type === 'struct' || type === 'union') && Array.isArray(node.members) && node.name) {
+		if (!state.claimed.has(node)) {
+			collectStruct(node, type, path, texts, state, null, local, owner);
+		}
+		return;
+	}
+	if (node.isTypedef === true && Array.isArray(node.declarators)) {
+		if (!state.claimed.has(node)) collectTypedef(node, path, texts, state, local, owner);
 		return;
 	}
 
 	/* -- declarations ------------------------------------------------ */
 
 	if (type === 'FunctionDeclaration' && name) {
-		// Overloads are `name__ov1` internally but share the source name, so
-		// each declaration gets its own entry under the name the user wrote.
-		const info = describe(symbol, sourceName(name), 'function', local, path, texts, location, true);
-		if (info) {
-			info.parameters = renderParameters(node, path, texts);
-			declare(state, info, path);
+		// Definitions are collected up front, so a prototype and its definition
+		// share one target and the definition is not lost from rename.
+		if (node.body) return;
+		let target = symbol ? state.functionTargets.get(symbol) ?? null : null;
+		if (!target) {
+			target = describe(symbol, sourceName(name), 'function', local, path, texts, location, true);
+			if (target) {
+				target.parameters = renderParameters(node, path, texts);
+				declare(state, target, path);
+				if (symbol) state.functionTargets.set(symbol, target);
+			}
 		}
+		if (!target) return;
+		const offset = nameOffset(texts, path ?? '', location, name, true);
+		if (offset < 0) return;
+		// `declare` already recorded this site when the prototype is the only
+		// declaration there is.
+		if (target.declarationOffset === offset && target.path === path) return;
+		state.references.push({
+			path,
+			range: texts.range(path ?? '', offset, name.length),
+			offset,
+			isDeclaration: true,
+			target,
+		});
 		return;
 	}
 
@@ -890,18 +1154,21 @@ function visit(
 		// not the token's name. Recording it would paint or rename a random part
 		// of the `#define` line.
 		if (texts.text(path ?? '').slice(offset, offset + name.length) !== name) return;
-		const target = symbol
-			? describe(
-					symbol,
-					name,
-					symbol.kind,
-					local,
-					path,
-					texts,
-					symbol.location ?? null,
-					symbol.kind === 'function'
-				)
-			: null;
+		const chosen = chooseFunctionTarget(symbol, state, path, texts);
+		const target =
+			chosen ??
+			(symbol
+				? describe(
+						symbol,
+						name,
+						symbol.kind,
+						local,
+						path,
+						texts,
+						symbol.location ?? null,
+						symbol.kind === 'function'
+					)
+				: null);
 		state.references.push({
 			path,
 			range: texts.range(path ?? '', offset, name.length),
@@ -924,11 +1191,22 @@ function visitTypeSpecifier(
 	node: AstNode,
 	path: string | null,
 	texts: FileText,
-	state: WalkState
+	state: WalkState,
+	scope: AstScope | null,
+	local: 'file' | 'local',
+	owner: string | null
 ): void {
 	const location = node.location;
 	const typeName = asName(node.typeName);
 	if (!location || !path || !typeName) return;
+
+	// An `enum` specifier that carries its enumerators is a definition. The
+	// global ones were read up front; a block-scope enum arrives here.
+	if (node.getAttribute?.('enumValues')) {
+		collectEnum(node, path, texts, state, scope, local, owner);
+		return;
+	}
+
 	const start = texts.offset(path, location.line, location.column, location.index);
 
 	if (typeName === 'struct' || typeName === 'union' || typeName === 'enum') {
@@ -1048,6 +1326,49 @@ function declare(state: WalkState, info: SymbolInfo, path: string | null): void 
 		offset: info.declarationOffset,
 		isDeclaration: true,
 		target: info,
+	});
+}
+
+/**
+ * The declaration a function use should point at.
+ *
+ * Definitions are collected up front. A prototype that the compiler drops from
+ * the AST -- a declaration in a header is the common case -- has no node left to
+ * walk, so its declaration is rebuilt from the symbol's own location the first
+ * time the name is used, which is when the editor needs it.
+ */
+function chooseFunctionTarget(
+	symbol: SymbolEntry | null,
+	state: WalkState,
+	path: string | null,
+	texts: FileText
+): SymbolInfo | null {
+	if (!symbol || symbol.kind !== 'function') return null;
+	const known = state.functionTargets.get(symbol);
+	if (known) return known;
+
+	const location = symbol.location;
+	const symbolPath = location?.filename ?? path;
+	if (!location || !symbolPath) return null;
+	const info = describe(symbol, sourceName(symbol.name), 'function', 'file', symbolPath, texts, location, true);
+	if (!info) return null;
+	const parameters = declaredParameters(symbol);
+	if (parameters) info.parameters = parameters;
+	declare(state, info, symbolPath);
+	state.functionTargets.set(symbol, info);
+	return info;
+}
+
+/** Parameter names and types from a function's analyser signature. */
+function declaredParameters(symbol: SymbolEntry): ParameterInfo[] | undefined {
+	const signature = symbol.type as { parameters?: unknown } | null;
+	if (!signature || !Array.isArray(signature.parameters)) return undefined;
+	return signature.parameters.map(parameter => {
+		const entry = parameter as { name?: unknown; type?: unknown };
+		return {
+			name: typeof entry.name === 'string' ? entry.name : null,
+			type: typeof entry.type === 'string' ? entry.type : '?',
+		};
 	});
 }
 

@@ -24,7 +24,7 @@
 		},
 		{
 			"name": "keyword.operator.mlog",
-			"match": "\\b(printflush|printchar|drawflush|ucontrol|stricteq|vecalias|getlink|control|ulocate|format|sensor|uradar|lookup|byname|memcpy|remote|veccpy|print|radar|ubind|write|adiff|floor|memsp|draw|wait|stop|jump|read|acos|asin|atan|ceil|rand|sqrt|asm|set|end|abs|cos|max|min|pow|sin|tan|op)\\b"
+			"match": "\\b(printflush|printchar|drawflush|ucontrol|stricteq|vecalias|getlink|control|ulocate|format|sensor|uradar|lookup|assert|byname|memcpy|printf|remote|veccpy|print|radar|ubind|write|adiff|floor|memsp|draw|wait|stop|jump|read|acos|asin|atan|ceil|rand|sqrt|asm|set|end|abs|cos|max|min|pow|sin|tan|op)\\b"
 		},
 		{
 			"name": "string.quoted.double.mlog",

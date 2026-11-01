@@ -406,6 +406,150 @@ int main(void) {
 	});
 });
 
+describe('enum and typedef struct', () => {
+	const TYPES = `enum colour { RED, GREEN = 5 };
+typedef struct { int x; int y; } point_t;
+typedef struct named { int a; } named_t;
+typedef enum { A, B } letter_t;
+int main(void) {
+	enum colour c = RED;
+	point_t p;
+	named_t q;
+	p.x = 1;
+	q.a = 2;
+	return c + p.x + q.a;
+}
+`;
+
+	it('offers enumerators, tags and typedef aliases', async () => {
+		const response = await analyse(request(TYPES), host);
+		assert.deepEqual(
+			response.diagnostics.map(diagnostic => diagnostic.message),
+			[],
+			'the enum/typedef fixture must analyse cleanly'
+		);
+		assert.ok(response.index, 'no index for the enum/typedef fixture');
+		const index = response.index;
+		const document: IndexedDocument = { uri: URI, index, text: TYPES, mainPath: PATH };
+
+		const labels = new Set(
+			complete(document, positionIn(TYPES, TYPES.indexOf('return c'))).map(item => item.label)
+		);
+		for (const name of ['RED', 'GREEN', 'A', 'B', 'colour', 'point_t', 'named_t']) {
+			assert.ok(labels.has(name), `${name} is missing from completion: ${[...labels].join(', ')}`);
+		}
+
+		// The anonymous struct's internal tag must not leak into a shown type.
+		const variable = (name: string) => index.symbols.find(symbol => symbol.name === name);
+		assert.equal(variable('p')?.type, 'point_t');
+		assert.equal(variable('q')?.type, 'named');
+		assert.deepEqual(
+			index.structs.find(struct => struct.name === 'point_t')?.members.map(member => member.name),
+			['x', 'y']
+		);
+
+		const members = complete(document, positionIn(TYPES, TYPES.indexOf('p.') + 2)).map(item => item.label);
+		assert.ok(members.includes('x'), `p. offered ${members.join(', ')}`);
+		const namedMembers = complete(document, positionIn(TYPES, TYPES.indexOf('q.') + 2)).map(
+			item => item.label
+		);
+		assert.ok(namedMembers.includes('a'), `q. offered ${namedMembers.join(', ')}`);
+	});
+
+	it('links the enum tag and its enumerators to their declarations', async () => {
+		const response = await analyse(request(TYPES), host);
+		assert.ok(response.index);
+		const document: IndexedDocument = { uri: URI, index: response.index, text: TYPES, mainPath: PATH };
+
+		const tagAt = TYPES.indexOf('enum colour c') + 'enum '.length;
+		const tag = definition(document, positionIn(TYPES, tagAt), toUri);
+		assert.ok(tag, 'the enum tag does not go to its declaration');
+		const tagStart = offsetOf(TYPES, tag.range.start);
+		assert.equal(TYPES.slice(tagStart, tagStart + 'colour'.length), 'colour');
+
+		const shown = hover(document, positionIn(TYPES, tagAt));
+		assert.match(shown?.contents ?? '', /enum colour/);
+
+		const red = hover(document, positionIn(TYPES, TYPES.indexOf('RED')));
+		assert.match(red?.contents ?? '', /RED/);
+	});
+
+	it('indexes a struct forward declaration without inventing members', async () => {
+		const FORWARD = `struct later;
+struct later *p;
+int main(void) { return 0; }
+`;
+		const response = await analyse(request(FORWARD), host);
+		assert.deepEqual(
+			response.diagnostics.map(diagnostic => diagnostic.message),
+			[],
+			'a pointer to an incomplete struct must analyse'
+		);
+		assert.ok(response.index);
+		const index = response.index;
+		const document: IndexedDocument = { uri: URI, index, text: FORWARD, mainPath: PATH };
+
+		assert.equal(index.symbols.find(symbol => symbol.name === 'later')?.type, 'struct');
+		assert.equal(index.structs.find(struct => struct.name === 'later'), undefined);
+
+		const shown = hover(document, positionIn(FORWARD, FORWARD.indexOf('struct later *p') + 7));
+		assert.match(shown?.contents ?? '', /struct later/);
+	});
+
+	it('indexes a block-scope enum', async () => {
+		const LOCAL = `int main(void) {
+	enum local_e { LOCAL_A, LOCAL_B };
+	return LOCAL_A;
+}
+`;
+		const response = await analyse(request(LOCAL), host);
+		assert.deepEqual(response.diagnostics.map(diagnostic => diagnostic.message), []);
+		assert.ok(response.index);
+		const document: IndexedDocument = { uri: URI, index: response.index, text: LOCAL, mainPath: PATH };
+
+		const labels = new Set(
+			complete(document, positionIn(LOCAL, LOCAL.indexOf('return LOCAL_A'))).map(item => item.label)
+		);
+		assert.ok(labels.has('LOCAL_A') && labels.has('LOCAL_B'), 'local enumerators are not offered');
+
+		const found = definition(document, positionIn(LOCAL, LOCAL.indexOf('return LOCAL_A') + 7), toUri);
+		assert.ok(found, 'the local enumerator does not go to its declaration');
+		const start = offsetOf(LOCAL, found.range.start);
+		assert.equal(LOCAL.slice(start, start + 'LOCAL_A'.length), 'LOCAL_A');
+	});
+});
+
+describe('function prototypes', () => {
+	const PROTO = `int add(int a, int b);
+int add(int a, int b) { return a + b; }
+int main(void) { return add(1, 2); }
+`;
+
+	it('indexes the definition once and points the prototype at it', async () => {
+		const response = await analyse(request(PROTO), host);
+		assert.deepEqual(response.diagnostics.map(diagnostic => diagnostic.message), []);
+		assert.ok(response.index);
+		const index = response.index;
+		const document: IndexedDocument = { uri: URI, index, text: PROTO, mainPath: PATH };
+
+		const declarations = index.symbols.filter(symbol => symbol.name === 'add');
+		assert.equal(declarations.length, 1, 'the prototype was indexed as a second function');
+		assert.equal(declarations[0].range.start.line, 1, 'the definition was not the indexed declaration');
+
+		const call = positionIn(PROTO, PROTO.indexOf('add(1, 2)'));
+		const found = references([document], document, call, toUri);
+		assert.equal(found.length, 3, 'expected the prototype, the definition and the call');
+		assert.ok(found.some(location => location.range.start.line === 0), 'the prototype is not a reference');
+
+		const edit = rename([document], document, call, 'plus', toUri);
+		assert.ok(edit, 'rename produced no edit');
+		const text = applyEdits(PROTO, edit.changes[URI]);
+		assert.match(text, /^int plus\(int a, int b\);$/m, 'the prototype was not renamed');
+		assert.match(text, /^int plus\(int a, int b\) \{/m, 'the definition was not renamed');
+		assert.match(text, /return plus\(1, 2\);/, 'the call was not renamed');
+	});
+});
+
 describe('find references', () => {
 	it('lists the declaration and every use', () => {
 		const found = references([document], document, positionIn(SOURCE, at('total(p.x')), toUri);
