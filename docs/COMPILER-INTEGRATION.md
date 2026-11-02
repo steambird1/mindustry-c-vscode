@@ -375,12 +375,14 @@ silently:
   `note:` line so they do not drown out our own warnings. The duplicate
   `POINTER_TYPE` and `REMOTE` keys that used to be on this list were removed
   upstream.
-- **`test13.c` crashes the analyser on a struct-array compound initializer.**
-  `sts[3] = {222, 333};` (an uncast brace initializer on an array element)
-  recurses in `TypeInfo.toString` → `qualifiersOf` until the stack overflows
-  (`cb0804f`). The patches are neutral: the same happens without them. The
-  golden records 66/80 compiling testers and omits it; the extension reports the
-  compiler's fatal instead of crashing.
+
+One regression recorded here was fixed upstream in `6d95d76`: assigning a
+struct value to a memory struct-array element (`sts[3] = {222, 333};` or the
+C99 `(struct S){...}` form) recursed in `RefPointerRet.set` until the stack
+overflowed, and element-to-element assignment copied the reference pair instead
+of the contents. `RefPointerRet.set` now copies struct contents via the
+generator's `copyStructToPointer`; `test13.c` compiles again and the golden is
+back to 67/80.
 
 One gap once recorded here is closed upstream as of `b3c3a30`: `for (int i = 0;
 …)` parses and compiles, empty clauses (`for (; t < 3; t++)`) included. Re-checked

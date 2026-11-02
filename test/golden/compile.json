@@ -1,5 +1,5 @@
 {
-	"compiler": "cb0804f",
+	"compiler": "6d95d76",
 	"files": {
 		"sample1.c": {
 			"success": true,
@@ -64,6 +64,14 @@
 			"success": true,
 			"hash": "8aeb5dc5779d",
 			"lines": 115,
+			"errors": [],
+			"warnings": [],
+			"fatal": null
+		},
+		"test13.c": {
+			"success": true,
+			"hash": "9da3e2af1596",
+			"lines": 92,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
