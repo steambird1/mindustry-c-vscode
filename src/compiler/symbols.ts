@@ -645,7 +645,7 @@ function collectEnum(
 	if (!path) return;
 
 	const enumName = asName(node.getAttribute?.('enumName'));
-	const tagDoc = docFor(state, texts, path, location);
+	const tagDoc = declarationDocFor(state, texts, path, location);
 	// `__enum_N` is the compiler's name for a body with no tag.
 	if (enumName && !enumName.startsWith('__')) {
 		const start = texts.offset(path, location.line, location.column, location.index);
@@ -754,7 +754,7 @@ function collectFunctions(
 			}
 			// Documentation usually lives on the prototype in a header; prefer it
 			// over the definition's own comment when both exist.
-			const firstDoc = firstOffset >= 0 ? docFor(state, texts, firstPath, first) : undefined;
+			const firstDoc = firstOffset >= 0 ? declarationDocFor(state, texts, firstPath, first) : undefined;
 			if (firstDoc) info.doc = firstDoc;
 		}
 
@@ -792,7 +792,7 @@ function collectStruct(
 
 	const isForward = node.isForward === true;
 	const previous = expose ? state.typeSymbols.get(name) ?? null : null;
-	const tagDoc = docFor(state, texts, path, node.location);
+	const tagDoc = declarationDocFor(state, texts, path, node.location);
 
 	if (expose) {
 		const symbol: SymbolInfo = {
@@ -851,7 +851,7 @@ function collectStruct(
 		// The member's own location is its name; the type specifier starts the
 		// member declaration, which is where a comment above it ends.
 		const docLocation = (member.type as AstNode | undefined)?.location ?? member.location;
-		const memberDoc = docFor(state, texts, docLocation?.filename ?? memberPath, docLocation);
+		const memberDoc = declarationDocFor(state, texts, docLocation?.filename ?? memberPath, docLocation);
 
 		const type = memberTypeText(name, memberName, member, state);
 
@@ -1008,7 +1008,7 @@ function collectTypedef(
 	state.claimed.add(node);
 	const declaredAt = texts.offset(path, node.location.line, node.location.column, node.location.index);
 	const text = texts.text(path);
-	const doc = docFor(state, texts, path, node.location);
+	const doc = declarationDocFor(state, texts, path, node.location);
 	const specifier = node.type as AstNode | undefined;
 	const specKeyword = asName(specifier?.typeName);
 
@@ -1204,7 +1204,7 @@ function visit(
 		// statement, whose position the parent declaration carries.
 		const parent = node.parent as AstNode | undefined;
 		const docLocation = parent?.location ?? location;
-		const doc = docFor(state, texts, docLocation.filename ?? path, docLocation);
+		const doc = declarationDocFor(state, texts, docLocation.filename ?? path, docLocation);
 		const info: SymbolInfo = {
 			kind: 'variable',
 			name,
@@ -1441,7 +1441,7 @@ function describe(
 	if (!declarationPath) return null;
 	const offset = nameOffset(texts, declarationPath, location, name, isFunction);
 	if (offset < 0) return null;
-	const doc = docFor(state, texts, declarationPath, location);
+	const doc = declarationDocFor(state, texts, declarationPath, location);
 	return {
 		kind,
 		name,
@@ -1473,13 +1473,87 @@ function docFor(
 	location: AstLocation | null
 ): string | undefined {
 	if (!path || !location) return undefined;
+	return docAt(state, texts, path, texts.offset(path, location.line, location.column, location.index));
+}
+
+/**
+ * A declaration's comment, reached across leading storage/type qualifiers.
+ *
+ * The parser records a declaration at its type keyword, not at the qualifier:
+ * `const int w` reports `int`, and `static int f` reports `int`. Scanning back
+ * from there would stop on `const`/`static`; this walks over those words first.
+ */
+function declarationDocFor(
+	state: WalkState,
+	texts: FileText,
+	path: string | null,
+	location: AstLocation | null
+): string | undefined {
+	if (!path || !location) return undefined;
 	const start = texts.offset(path, location.line, location.column, location.index);
+	return docAt(state, texts, path, declarationStartOffset(texts.text(path), start));
+}
+
+function docAt(
+	state: WalkState,
+	texts: FileText,
+	path: string,
+	start: number
+): string | undefined {
 	const key = `${path}:${start}`;
 	const cached = state.docCache.get(key);
 	if (cached !== undefined) return cached ?? undefined;
 	const doc = commentBefore(texts.text(path), start);
 	state.docCache.set(key, doc ?? null);
 	return doc;
+}
+
+/** Words that may sit in front of the type keyword on the same line. */
+const DECLARATION_WORDS = new Set([
+	'const',
+	'volatile',
+	'static',
+	'extern',
+	'register',
+	'auto',
+	'inline',
+	'near',
+	'persistent',
+	'remote',
+	'signed',
+	'unsigned',
+	'short',
+	'long',
+	'struct',
+	'union',
+	'enum',
+	'bool',
+	'char',
+	'int',
+	'float',
+	'double',
+	'void',
+]);
+
+/**
+ * Move back to the first word of a declaration on the starting line.
+ *
+ * Only known declaration words and whitespace may be crossed, so a previous
+ * statement (`int a; const int b;`) stops the walk at the `;`.
+ */
+function declarationStartOffset(text: string, offset: number): number {
+	const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+	let candidate = offset;
+	while (candidate > lineStart) {
+		let end = candidate;
+		while (end > lineStart && /\s/.test(text[end - 1])) end--;
+		let start = end;
+		while (start > lineStart && /[A-Za-z_]/.test(text[start - 1])) start--;
+		if (start === end) break;
+		if (!DECLARATION_WORDS.has(text.slice(start, end))) break;
+		candidate = start;
+	}
+	return candidate;
 }
 
 function commentBefore(text: string, start: number): string | undefined {

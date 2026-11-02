@@ -1008,13 +1008,19 @@ int add(int a, int b) { return a + b; }
 // A point in the plane.
 struct point {
 	// horizontal
-	int x;
+	const int x;
 	/* vertical */
 	int y;
 };
 
 // A counter.
 int counter;
+
+// The width.
+const int width = 1;
+
+// Returns one.
+static int one(int value) { return value; }
 
 // A number.
 typedef int number;
@@ -1024,8 +1030,7 @@ enum colour { RED, GREEN };
 
 int main(void) {
 	struct point p;
-	p.x = 1;
-	return add(counter, p.x);
+	return add(counter, p.x) + width + one(1);
 }
 `;
 
@@ -1053,6 +1058,12 @@ int main(void) {
 		assert.match(hover(document, at('y;'))?.contents ?? '', /vertical/);
 		assert.match(hover(document, at('number;'))?.contents ?? '', /A number\./);
 		assert.match(hover(document, at('enum colour', 5))?.contents ?? '', /The colours\./);
+		// A declaration is recorded at its type keyword; the comment sits above
+		// the storage qualifier.
+		assert.match(hover(document, at('width ='))?.contents ?? '', /The width\./);
+		assert.match(hover(document, at('width +'))?.contents ?? '', /The width\./);
+		assert.match(hover(document, at('one(int'))?.contents ?? '', /Returns one\./);
+		assert.match(hover(document, at('one(1)'))?.contents ?? '', /Returns one\./);
 	});
 
 	it('carries the comment into completion and signature help', async () => {
@@ -1095,6 +1106,13 @@ int main(void) {
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
+	});
+
+	it('keeps non-ASCII comment text', async () => {
+		const CHINESE = '// 这里是注释\nint value;\n';
+		const document = await indexed(CHINESE);
+		const shown = hover(document, positionIn(CHINESE, CHINESE.indexOf('value')));
+		assert.match(shown?.contents ?? '', /这里是注释/);
 	});
 
 	it('does not borrow a comment from another declaration', async () => {

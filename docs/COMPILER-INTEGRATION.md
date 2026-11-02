@@ -279,8 +279,12 @@ to keep them apart:
 Comments are not in the AST, so the index reads them from the source text at the
 declaration's **statement** position (a declarator's own location is its name;
 its parent declaration carries the statement start, and a member's type
-specifier marks the start of the member). A comment attaches when only
-whitespace — at most one blank line — separates it from the declaration:
+specifier marks the start of the member). The parser reports a declaration at
+its type keyword, not at a leading qualifier, so `const int w` and
+`static int f` are walked back over the declaration words (`const`, `static`,
+`unsigned`, `struct`, …) before the comment is looked for. A comment attaches
+when only whitespace — at most one blank line — separates it from the
+declaration:
 
 - consecutive `//`, `///` or `//!` lines;
 - `/* ... */` and `/** ... */`, with the leading `*` of each line stripped.
