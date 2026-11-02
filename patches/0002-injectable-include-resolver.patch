@@ -1,8 +1,8 @@
 diff --git a/mindcLexer.js b/mindcLexer.js
-index 50057ff..4d98341 100644
+index 4c404a3..4028922 100644
 --- a/mindcLexer.js
 +++ b/mindcLexer.js
-@@ -351,6 +351,17 @@ export const PUNCTUATORS = {
+@@ -356,6 +356,18 @@ export const PUNCTUATORS = {
  
  
  export class Lexer {
@@ -11,28 +11,28 @@ index 50057ff..4d98341 100644
 +     * @param {Object} macros
 +     * @param {boolean} suppressMacroExpansion
 +     * @param {Object} macroParams
-+     * @param {{ includeResolver?: (filename: string, from: string?) => Promise<any>, filename?: string, legacyCharString?: boolean }} [options]
++     * @param {{ includeResolver?: (filename: string, from: string?) => Promise<any>, fileName?: string, legacyCharString?: boolean }} [options]
 +     *   `options.includeResolver` lets a non-browser host (the VS Code extension,
 +     *   Node) resolve `#include`. Without it the HTTP path is used unchanged.
-+     *   `options.filename` is this file's path: it is passed to the resolver and
++     *   `options.fileName` is this file's path: it is passed to the resolver and
 +     *   recorded on every token location.
++     * @param {Object} [macroVariadic] Which macros take `...` arguments.
 +     */
-     constructor(sourceCode, macros = {}, suppressMacroExpansion = false, macroParams = {}, options = {}) {
+     constructor(sourceCode, macros = {}, suppressMacroExpansion = false, macroParams = {}, options = {}, macroVariadic = {}) {
          this.sourceCode = sourceCode;
          this.position = 0;
-@@ -358,6 +369,11 @@ export class Lexer {
-         this.column = 1;
-         this.tokens = [];
-         this.errors = [];
+@@ -373,6 +385,10 @@ export class Lexer {
+ 		this.legacyCharString = options.legacyCharString === true;
+ 		this.fileName = options.fileName ?? '<source>';
+ 		this.lexerOptions = { ...options };
 +        /**
-+         * @type {(filename: string, from: string?) => Promise<{text: string, path: string?} | {extension: any} | null>}
++         * @type {(filename: string, from: string?) => Promise<{text: string, path?: string} | {extension: any} | null>}
 +         */
 +        this.includeResolver = options?.includeResolver ?? null;
-+        this.filename = options?.filename ?? null;
-         this.suppressMacroExpansion = suppressMacroExpansion;
- 		/*
- 		Legacy entry: before `string_t` existed, `char` was the native string
-@@ -1135,6 +1151,14 @@ export class Lexer {
+         
+         // 预处理器状态
+         this.macros = {...macros, '__MINDUSTRY__': '1'}; // 存储宏定义 {name: value}
+@@ -1153,6 +1169,14 @@ export class Lexer {
          const match = args.trim().match(/^["<](.+?)[">]$/);
          if (match) {
              const filename = match[1];
@@ -47,7 +47,7 @@ index 50057ff..4d98341 100644
              try {
                  // 假设有同步获取文本的方法（在实际浏览器中需使用异步 fetch 并配合 async/await）
                  
-@@ -1202,6 +1226,75 @@ export class Lexer {
+@@ -1224,6 +1248,86 @@ export class Lexer {
          }
      }
  
@@ -65,7 +65,7 @@ index 50057ff..4d98341 100644
 +    async handleIncludeWithResolver(filename, location) {
 +        let resolved;
 +        try {
-+            resolved = await this.includeResolver(filename, this.filename ?? null);
++            resolved = await this.includeResolver(filename, this.fileName ?? null);
 +        } catch (e) {
 +            this.addError(`Cannot open included file: ${filename}`, location);
 +            return;
@@ -86,11 +86,18 @@ index 50057ff..4d98341 100644
 +            Carry the lexer's options too -- `legacy_char_string` is one of
 +            them -- so an included header is read exactly like its includer.
 +            */
-+            const includedLexer = new Lexer(resolved.text, this.macros, false, this.macroParams, {
-+                ...this.lexerOptions,
-+                includeResolver: this.includeResolver,
-+                filename: includedPath
-+            });
++            const includedLexer = new Lexer(
++                resolved.text,
++                this.macros,
++                false,
++                this.macroParams,
++                {
++                    ...this.lexerOptions,
++                    includeResolver: this.includeResolver,
++                    fileName: includedPath
++                },
++                this.macroVariadic
++            );
 +            const includedResult = await includedLexer.tokenize();
 +            if (!this.suppressMacroExpansion) {
 +                this.tokens.push(...includedResult.tokens.filter(token => token.type != TokenType.EOF)
@@ -114,6 +121,10 @@ index 50057ff..4d98341 100644
 +            this.macroParams = {
 +                ...this.macroParams,
 +                ...includedLexer.macroParams
++            };
++            this.macroVariadic = {
++                ...this.macroVariadic,
++                ...includedLexer.macroVariadic
 +            };
 +        } catch (e) {
 +            this.addError(`Cannot open included file: ${filename}`, location);

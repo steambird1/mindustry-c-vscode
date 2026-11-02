@@ -1,5 +1,5 @@
 {
-	"compiler": "fdc7dc2",
+	"compiler": "cb0804f",
 	"files": {
 		"sample1.c": {
 			"success": true,
@@ -62,16 +62,8 @@
 		},
 		"test12.c": {
 			"success": true,
-			"hash": "1dbc31bb6f9b",
-			"lines": 121,
-			"errors": [],
-			"warnings": [],
-			"fatal": null
-		},
-		"test13.c": {
-			"success": true,
-			"hash": "e86498cc5e80",
-			"lines": 48,
+			"hash": "8aeb5dc5779d",
+			"lines": 115,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -168,8 +160,8 @@
 		},
 		"test1b.c": {
 			"success": true,
-			"hash": "7ac7ea0ecfce",
-			"lines": 100,
+			"hash": "4eddef27e978",
+			"lines": 89,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -356,8 +348,8 @@
 		},
 		"test29.c": {
 			"success": true,
-			"hash": "e2e3a691cdcb",
-			"lines": 97,
+			"hash": "14e616c5dad6",
+			"lines": 86,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
@@ -372,24 +364,24 @@
 		},
 		"test29b.c": {
 			"success": true,
-			"hash": "db48dc0b1c9a",
-			"lines": 50,
+			"hash": "d44bcf78b5a4",
+			"lines": 47,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
 		},
 		"test30.c": {
 			"success": true,
-			"hash": "6842f973c0f5",
-			"lines": 129,
+			"hash": "62df8053bfb6",
+			"lines": 169,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
 		},
 		"test31.c": {
 			"success": true,
-			"hash": "0fd7ce883277",
-			"lines": 153,
+			"hash": "514473ad764b",
+			"lines": 162,
 			"errors": [],
 			"warnings": [
 				"34:9 Condition expression should be of type 'bool'",
@@ -458,16 +450,16 @@
 		},
 		"test37.c": {
 			"success": true,
-			"hash": "6de82b43ff7e",
-			"lines": 88,
+			"hash": "5280983bf672",
+			"lines": 89,
 			"errors": [],
 			"warnings": [],
 			"fatal": null
 		},
 		"test37a.c": {
 			"success": true,
-			"hash": "28393f6db3d0",
-			"lines": 90,
+			"hash": "91a52e5573e8",
+			"lines": 41,
 			"errors": [],
 			"warnings": [],
 			"fatal": null

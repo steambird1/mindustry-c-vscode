@@ -31,6 +31,9 @@ Logic (`mlog`).
   forward declarations, function prototypes, block-scope types and bitfields
   complete and navigate; `printf`, `assert`, `stdbool.h` and `stdio.h` come
   from the compiler's own headers.
+- **C99 additions**: designated initializers, compound literals, `restrict`,
+  `_Static_assert`/`static_assert` and the C99 compatibility headers are
+  highlighted and analysed the way the compiler accepts them.
 
 ## Hello, World
 

@@ -375,6 +375,12 @@ silently:
   `note:` line so they do not drown out our own warnings. The duplicate
   `POINTER_TYPE` and `REMOTE` keys that used to be on this list were removed
   upstream.
+- **`test13.c` crashes the analyser on a struct-array compound initializer.**
+  `sts[3] = {222, 333};` (an uncast brace initializer on an array element)
+  recurses in `TypeInfo.toString` → `qualifiersOf` until the stack overflows
+  (`cb0804f`). The patches are neutral: the same happens without them. The
+  golden records 66/80 compiling testers and omits it; the extension reports the
+  compiler's fatal instead of crashing.
 
 One gap once recorded here is closed upstream as of `b3c3a30`: `for (int i = 0;
 …)` parses and compiles, empty clauses (`for (; t < 3; t++)`) included. Re-checked

@@ -72,7 +72,7 @@ export interface LexerLike {
 	errors: CompilerDiagnostic[];
 	tokenize(): Promise<{ tokens: TokenLike[] }>;
 	includeResolver?: unknown;
-	filename?: string | null;
+	fileName?: string | null;
 	/** Name -> replacement, for every macro the lexer defined. */
 	macros?: Record<string, unknown>;
 }
@@ -97,7 +97,7 @@ export interface CompilerModule {
 		macros?: Record<string, string>,
 		suppressMacroExpansion?: boolean,
 		macroParams?: Record<string, unknown>,
-		options?: { includeResolver?: unknown; filename?: string | null }
+		options?: { includeResolver?: unknown; fileName?: string | null }
 	) => LexerLike;
 }
 
@@ -321,7 +321,7 @@ function createCompiler(options: RunOptions, tracker: IncludeTracker): CompilerL
 		// fresh lexer would silently lose both, so `#if` over the target version
 		// would take the wrong branch.
 		compiler.lexer.includeResolver = includeResolver;
-		compiler.lexer.filename = options.filePath ?? null;
+		compiler.lexer.fileName = options.filePath ?? null;
 	}
 	return compiler;
 }

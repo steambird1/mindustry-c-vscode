@@ -1,6 +1,7 @@
 {
 	"generatedFrom": "compiler",
 	"keywords": [
+		"_Static_assert",
 		"auto",
 		"bool",
 		"break",
@@ -28,11 +29,13 @@
 		"persistent",
 		"register",
 		"remote",
+		"restrict",
 		"return",
 		"short",
 		"signed",
 		"sizeof",
 		"static",
+		"static_assert",
 		"struct",
 		"switch",
 		"true",
