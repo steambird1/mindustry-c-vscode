@@ -46,6 +46,10 @@ const INCLUDE_OTHER = 'file:///c%3A/project/other-main.mlgc';
 const MESSAGE_DOC = 'file:///c%3A/project/message.mlgc';
 /** A half-typed content id. */
 const AT_DOC = 'file:///c%3A/project/at.mlgc';
+/** A syntax error with a structured parser diagnostic and an insertion fix. */
+const PARSE_DOC = 'file:///c%3A/project/parse.mlgc';
+/** A duplicate declaration, which carries a related location. */
+const DUP_DOC = 'file:///c%3A/project/duplicate.mlgc';
 
 const BROKEN = 'int main(void) {\n    return thisDoesNotExist;\n}\n';
 
@@ -54,7 +58,16 @@ interface Published {
 	count: number;
 	messages: string[];
 	/** The diagnostics as the server sent them, for code-action requests. */
-	diagnostics: Array<{ message: string; range: unknown }>;
+	diagnostics: Array<{
+		message: string;
+		code?: string | number;
+		range: {
+			start: { line: number; character: number };
+			end: { line: number; character: number };
+		};
+		relatedInformation?: Array<{ message: string; location: { uri: string } }>;
+		data?: unknown;
+	}>;
 }
 
 interface RpcMessage {
@@ -418,6 +431,54 @@ describe('the language server, over the wire', () => {
 		assert.equal(actions[0].edit.changes[MESSAGE_DOC][0].newText, 'auto device message1;\n');
 	});
 
+	it('surfaces a structured parser diagnostic and applies its insertion fix', async () => {
+		open(PARSE_DOC, 'mlgc', 'int main(void) {\n    int x = 1 print(x);\n}\n');
+		const published = await client.waitForFinding(PARSE_DOC, 20000);
+		const diagnostic = published.diagnostics.find(
+			entry => entry.code === 'E_PARSE_EXPECTED_TOKEN'
+		);
+		assert.ok(
+			diagnostic,
+			`no structured parser code: ${published.messages.join(' | ')}`
+		);
+		assert.ok(
+			diagnostic.range.end.character > diagnostic.range.start.character ||
+				diagnostic.range.end.line > diagnostic.range.start.line,
+			'the parser range is not wider than a point'
+		);
+
+		const actions = (await client.request('textDocument/codeAction', {
+			textDocument: { uri: PARSE_DOC },
+			range: diagnostic.range,
+			context: { diagnostics: [diagnostic] },
+		})) as Array<{
+			title: string;
+			edit: { changes: Record<string, Array<{ newText: string }>> };
+		}>;
+		const insert = actions.find(action => /Insert ';'/.test(action.title));
+		assert.ok(insert, `no insertion fix: ${JSON.stringify(actions.map(a => a.title))}`);
+		assert.equal(insert.edit.changes[PARSE_DOC][0].newText, ';');
+	});
+
+	it('publishes related information for a duplicate declaration', async () => {
+		open(
+			DUP_DOC,
+			'mlgc',
+			'int main(void) {\n    int x = 1;\n    int x = 2;\n    return x;\n}\n'
+		);
+		const published = await client.waitForFinding(DUP_DOC, 20000);
+		const diagnostic = published.diagnostics.find(
+			entry => entry.code === 'E_SEMANTIC_DUPLICATE_VARIABLE'
+		);
+		assert.ok(
+			diagnostic,
+			`no duplicate-variable code: ${published.messages.join(' | ')}`
+		);
+		assert.ok(diagnostic.relatedInformation?.length, 'no related information');
+		assert.match(diagnostic.relatedInformation[0].message, /first declared/);
+		assert.equal(diagnostic.relatedInformation[0].location.uri, DUP_DOC);
+	});
+
 	it('answers semantic tokens for the open document', async () => {
 		const provider = capabilities.semanticTokensProvider as { legend: { tokenTypes: string[] } };
 		assert.ok(provider.legend.tokenTypes.includes('macro'), 'the legend has no macro token type');
@@ -539,6 +600,8 @@ describe('the language server, over the wire', () => {
 			INCLUDE_OTHER,
 			MESSAGE_DOC,
 			AT_DOC,
+			PARSE_DOC,
+			DUP_DOC,
 		]);
 		const stray = client.published.filter(entry => entry.count > 0 && !known.has(entry.uri));
 		assert.deepEqual(stray, [], 'a finding was attributed to something the editor does not have');

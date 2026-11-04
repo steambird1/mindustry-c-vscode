@@ -1123,6 +1123,50 @@ int main(void) {
 	});
 });
 
+describe('structured diagnostics', () => {
+	it('reports a remote self-target as a code with hints, not a crash', async () => {
+		const SELF = `remote int s[8] = remote(@this, s);\nint main(void) { return 0; }\n`;
+		const response = await analyse(request(SELF), host);
+		const diagnostic = response.diagnostics.find(entry => entry.code === 'E_REMOTE_SELF_TARGET');
+		assert.ok(diagnostic, `no E_REMOTE_SELF_TARGET in ${response.diagnostics.map(d => d.code).join(', ')}`);
+		assert.equal(diagnostic.severity, 'error');
+		assert.equal(diagnostic.stage, 'semantic');
+		assert.match(diagnostic.message, /cannot target the declaration being defined/);
+		assert.ok(
+			diagnostic.hints?.some(hint => /declare the owner first/.test(hint)),
+			`hints were ${JSON.stringify(diagnostic.hints)}`
+		);
+	});
+
+	it('carries the related location of a duplicate declaration', async () => {
+		const DUPLICATE = `int main(void) { int x = 1; int x = 2; return x; }\n`;
+		const response = await analyse(request(DUPLICATE), host);
+		const diagnostic = response.diagnostics.find(
+			entry => entry.code === 'E_SEMANTIC_DUPLICATE_VARIABLE'
+		);
+		assert.ok(diagnostic, 'no duplicate-variable diagnostic');
+		assert.ok(diagnostic.related?.length, 'no related location');
+		assert.match(diagnostic.related[0].message, /first declared/);
+		assert.equal(diagnostic.related[0].path, PATH);
+	});
+
+	it('gives a parser error a code, a range and the insertion fix', async () => {
+		const PARSE = `int main(void) { int x = 1 print(x); }\n`;
+		const response = await analyse(request(PARSE), host);
+		const diagnostic = response.diagnostics.find(
+			entry => entry.code === 'E_PARSE_EXPECTED_TOKEN'
+		);
+		assert.ok(diagnostic, 'no structured parser diagnostic');
+		assert.equal(diagnostic.stage, 'parser');
+		assert.equal(diagnostic.fix?.text, ';');
+		assert.equal(diagnostic.fix?.path, PATH);
+		assert.ok(
+			(diagnostic.endColumn ?? 0) > (diagnostic.column ?? 0),
+			'the parser range does not cover the found token'
+		);
+	});
+});
+
 describe('semantic tokens', () => {
 	const decode = (data: number[]) => {
 		const tokens: Array<{ line: number; character: number; length: number; type: number; modifiers: number }> = [];

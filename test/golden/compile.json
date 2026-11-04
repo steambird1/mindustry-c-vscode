@@ -1,5 +1,5 @@
 {
-	"compiler": "6d95d76",
+	"compiler": "ffb166d",
 	"files": {
 		"sample1.c": {
 			"success": true,
@@ -17,14 +17,11 @@
 			"lines": 162,
 			"errors": [],
 			"warnings": [
+				"[object Object]:undefined Condition always true in if statement",
+				"[object Object]:undefined Loop never executed (while(false))",
 				"34:8 Condition expression should be of type 'bool'",
 				"37:6 Condition expression should be of type 'bool'",
-				"41:10 Loop condition should be of type 'bool'",
-				"[object Object]:undefined Condition always true in if statement",
-				"[object Object]:undefined Condition always true in if statement",
-				"[object Object]:undefined Loop never executed (while(false))",
-				"[object Object]:undefined Loop never executed (while(false))",
-				"[object Object]:undefined Loop never executed (while(false))"
+				"41:10 Loop condition should be of type 'bool'"
 			],
 			"fatal": null
 		},

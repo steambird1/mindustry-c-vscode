@@ -89,6 +89,58 @@ describe('diagnostic shape', () => {
 	it('survives a missing diagnostic list', () => {
 		assert.deepEqual(normaliseDiagnostics(undefined, index(), MAIN), []);
 	});
+
+	it('keeps the structured range, code, related, hints and fix', () => {
+		const result = normaliseDiagnostic(
+			{
+				message: "Variable 'x' is already declared",
+				severity: 'error',
+				stage: 'semantic',
+				code: 'E_SEMANTIC_DUPLICATE_VARIABLE',
+				line: 2,
+				column: 5,
+				endLine: 2,
+				endColumn: 6,
+				range: {
+					start: { line: 2, column: 5 },
+					end: { line: 2, column: 6 },
+				},
+				related: [
+					{
+						message: 'first declared here',
+						range: {
+							start: { line: 1, column: 10 },
+							end: { line: 1, column: 11 },
+						},
+					},
+				],
+				hints: [{ message: 'rename one of them' }, 'or remove one'],
+				fix: {
+					range: {
+						start: { line: 1, column: 10 },
+						end: { line: 1, column: 10 },
+					},
+					text: ';',
+				},
+			},
+			index(),
+			MAIN
+		);
+
+		assert.equal(result.severity, 'error');
+		assert.equal(result.stage, 'semantic');
+		assert.equal(result.code, 'E_SEMANTIC_DUPLICATE_VARIABLE');
+		assert.equal(result.endLine, 2);
+		assert.equal(result.endColumn, 6);
+		assert.deepEqual(result.hints, ['rename one of them', 'or remove one']);
+		assert.equal(result.related?.[0].message, 'first declared here');
+		assert.equal(result.related?.[0].path, MAIN);
+		assert.equal(result.related?.[0].line, 1);
+		assert.equal(result.fix?.path, MAIN);
+		assert.equal(result.fix?.line, 1);
+		assert.equal(result.fix?.column, 10);
+		assert.equal(result.fix?.text, ';');
+	});
 });
 
 describe('file attribution', () => {

@@ -112,14 +112,47 @@ export interface KnownDocumentsMessage {
 	documents: Record<string, string>;
 }
 
+export interface CompilerRelatedInformation {
+	message: string;
+	/** fs path of the related location. */
+	path?: string;
+	/** 1-based, as the compiler reports. */
+	line?: number;
+	column?: number;
+	endLine?: number;
+	endColumn?: number;
+}
+
+/** A concrete edit the compiler already knows how to make. */
+export interface CompilerFix {
+	/** fs path of the file the edit belongs to. */
+	path?: string;
+	/** 1-based positions, as the compiler reports. */
+	line: number;
+	column: number;
+	endLine: number;
+	endColumn: number;
+	text: string;
+}
+
 export interface CompilerDiagnostic {
 	message: string;
 	/** 1-based, as the compiler reports. */
 	line?: number;
 	column?: number;
-	severity: 'error' | 'warning';
+	/** End of the underline, when the compiler gave a range. */
+	endLine?: number;
+	endColumn?: number;
+	severity: 'error' | 'warning' | 'note';
+	/** Stable diagnostic code, e.g. `E_SEMANTIC_DUPLICATE_VARIABLE`. */
+	code?: string;
+	/** Compiler stage that produced it: lexer, parser, semantic, ... */
+	stage?: string;
 	/** fs path of the file the diagnostic belongs to, when it came from an #include. */
 	path?: string;
+	related?: CompilerRelatedInformation[];
+	hints?: string[];
+	fix?: CompilerFix;
 }
 
 /* ------------------------------------------------------------------ *

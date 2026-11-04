@@ -918,7 +918,7 @@ export interface ActionDiagnostic extends Pick<CompilerDiagnostic, 'message'> {
 	range?: { start: Position };
 }
 
-const UNDECLARED_IDENTIFIER = /^Undeclared identifier '([^']+)'$/;
+const UNDECLARED_IDENTIFIER = /^Undeclared identifier '([^']+)'/;
 
 /*
  * `char *p = "hi"` is refused: the text is read-only. The message names the

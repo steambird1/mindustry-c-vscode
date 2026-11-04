@@ -35,7 +35,7 @@ import { URI } from 'vscode-uri';
 import { AnalysisWorkerHost, defaultWorkerPath } from '../src/compiler/analysisSupervisor';
 import { diagnosticsAreSlow } from '../src/compiler/analysis';
 import { samePath } from '../src/compiler/documentAccess';
-import type { AnalysisResponse, CompilerDiagnostic, EffectiveConfig } from '../src/common/types';
+import type { AnalysisResponse, CompilerDiagnostic, CompilerFix, EffectiveConfig } from '../src/common/types';
 import {
 	canRename,
 	complete,
@@ -414,19 +414,64 @@ function firstLineOf(text: string): string {
 function toDiagnostic(diagnostic: CompilerDiagnostic): Diagnostic {
 	const line = Math.max(0, (diagnostic.line ?? 1) - 1);
 	const character = Math.max(0, (diagnostic.column ?? 1) - 1);
+	const rawEndLine = Math.max(0, (diagnostic.endLine ?? diagnostic.line ?? 1) - 1);
+	let endLine = rawEndLine;
+	let endCharacter = Math.max(0, (diagnostic.endColumn ?? (diagnostic.column ?? 1) + 1) - 1);
+	// A zero-width or backwards range is invisible or invalid; one character of
+	// underline is the least surprising default.
+	if (endLine < line || (endLine === line && endCharacter <= character)) {
+		endLine = line;
+		endCharacter = character + 1;
+	}
+
+	const hints = diagnostic.hints ?? [];
+	const message = hints.length
+		? `${diagnostic.message}\n\n${hints.map(hint => `Hint: ${hint}`).join('\n')}`
+		: diagnostic.message;
+
+	const relatedInformation = (diagnostic.related ?? [])
+		.filter(item => item.path && item.line !== undefined)
+		.map(item => {
+			const relatedLine = Math.max(0, (item.line ?? 1) - 1);
+			const relatedCharacter = Math.max(0, (item.column ?? 1) - 1);
+			const relatedEndLine = Math.max(0, (item.endLine ?? item.line ?? 1) - 1);
+			let relatedEndCharacter = Math.max(
+				0,
+				(item.endColumn ?? (item.column ?? 1) + 1) - 1
+			);
+			if (relatedEndLine === relatedLine && relatedEndCharacter <= relatedCharacter) {
+				relatedEndCharacter = relatedCharacter + 1;
+			}
+			return {
+				location: {
+					uri: toUri(item.path!),
+					range: {
+						start: { line: relatedLine, character: relatedCharacter },
+						end: { line: relatedEndLine, character: relatedEndCharacter },
+					},
+				},
+				message: item.message,
+			};
+		});
+
 	return {
 		severity:
 			diagnostic.severity === 'warning'
 				? DiagnosticSeverity.Warning
-				: DiagnosticSeverity.Error,
-		message: diagnostic.message,
+				: diagnostic.severity === 'note'
+					? DiagnosticSeverity.Information
+					: DiagnosticSeverity.Error,
+		message,
 		source: 'mindc',
+		...(diagnostic.code ? { code: diagnostic.code } : {}),
 		range: {
 			start: { line, character },
-			// A zero-width range is invisible in the editor; one character of
-			// underline is the least surprising default.
-			end: { line, character: character + 1 },
+			end: { line: endLine, character: endCharacter },
 		},
+		...(relatedInformation.length ? { relatedInformation } : {}),
+		// The client hands `data` back in a code-action request; this is how the
+		// compiler's own insertion fix reaches us without re-analysing.
+		...(diagnostic.fix ? { data: { fix: diagnostic.fix } } : {}),
 	};
 }
 
@@ -560,7 +605,41 @@ connection.onCodeAction(params => {
 	const document = documents.get(params.textDocument.uri);
 	const current = document ? { ...entry, text: document.getText() } : entry;
 	const diagnostics = params.context.diagnostics ?? [];
-	return quickFixes(current, diagnostics, {
+
+	// `mindcDiagnostics` already carries the insertion the parser wants; use it
+	// instead of guessing from the message. `data` survives the LSP round trip.
+	const compilerActions = diagnostics.flatMap(diagnostic => {
+		const fix = (diagnostic.data as { fix?: CompilerFix } | undefined)?.fix;
+		if (!fix?.path || !fix.text) return [];
+		return [
+			{
+				title: fix.text.includes('\n') ? 'Apply compiler fix' : `Insert '${fix.text}'`,
+				kind: CodeActionKind.QuickFix,
+				diagnostics: [diagnostic],
+				edit: {
+					changes: {
+						[toUri(fix.path)]: [
+							{
+								range: {
+									start: {
+										line: Math.max(0, fix.line - 1),
+										character: Math.max(0, fix.column - 1),
+									},
+									end: {
+										line: Math.max(0, fix.endLine - 1),
+										character: Math.max(0, fix.endColumn - 1),
+									},
+								},
+								newText: fix.text,
+							},
+						],
+					},
+				},
+			},
+		];
+	});
+
+	const quick = quickFixes(current, diagnostics, {
 		// `string_view` needs v150 and the string header; the server knows the
 		// target, the fix does not.
 		targetVersion: effectiveConfig?.targetVersion,
@@ -572,6 +651,8 @@ connection.onCodeAction(params => {
 		diagnostics: diagnostics.filter(diagnostic => diagnostic.message === fix.diagnostic),
 		edit: fix.edit,
 	}));
+
+	return [...compilerActions, ...quick];
 });
 
 connection.onRequest('textDocument/semanticTokens/full', (params: { textDocument: { uri: string } }) => {

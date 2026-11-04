@@ -23,6 +23,20 @@ export interface RawLocation {
 	column?: number;
 	index?: number;
 	filename?: string;
+	length?: number;
+	endLine?: number;
+	endColumn?: number;
+}
+
+export interface RawRelated {
+	message?: string;
+	location?: RawLocation;
+	range?: { start?: RawLocation; end?: RawLocation };
+}
+
+export interface RawFix {
+	range?: { start?: RawLocation; end?: RawLocation };
+	text?: string;
 }
 
 /** What the compiler pushes into `errors` / `warnings`. */
@@ -31,6 +45,15 @@ export interface RawDiagnostic {
 	line?: number | RawLocation | null;
 	column?: number | RawLocation | null;
 	location?: RawLocation;
+	severity?: string;
+	stage?: string;
+	code?: string;
+	range?: { start?: RawLocation; end?: RawLocation };
+	endLine?: number;
+	endColumn?: number;
+	related?: RawRelated[];
+	hints?: Array<string | { message?: string }>;
+	fix?: RawFix;
 	[key: string]: unknown;
 }
 
@@ -40,8 +63,30 @@ export interface NormalisedDiagnostic {
 	line?: number;
 	/** 1-based. Absent when the compiler gave none. */
 	column?: number;
+	/** End of the compiler's range, 1-based. Absent when it only gave a point. */
+	endLine?: number;
+	endColumn?: number;
+	severity?: 'error' | 'warning' | 'note';
+	code?: string;
+	stage?: string;
 	/** fs path of the file the diagnostic belongs to, when it is known. */
 	path?: string;
+	related?: Array<Required<Pick<NormalisedDiagnostic, 'message'>> & {
+		path?: string;
+		line?: number;
+		column?: number;
+		endLine?: number;
+		endColumn?: number;
+	}>;
+	hints?: string[];
+	fix?: {
+		path?: string;
+		line: number;
+		column: number;
+		endLine: number;
+		endColumn: number;
+		text: string;
+	};
 }
 
 /** Enough of the token stream to attribute a position to a file. */
@@ -63,6 +108,24 @@ function locationOf(diagnostic: RawDiagnostic): RawLocation | null {
 	// Some call sites pass the whole location as the second argument.
 	if (diagnostic.line && typeof diagnostic.line === 'object') {
 		return diagnostic.line;
+	}
+	return null;
+}
+
+/** Where the diagnostic starts, from the old shape or the structured range. */
+function startOf(diagnostic: RawDiagnostic): RawLocation | null {
+	const location = locationOf(diagnostic);
+	if (location) return location;
+	const start = diagnostic.range?.start;
+	return start && typeof start === 'object' ? start : null;
+}
+
+/** Where the diagnostic ends, if the compiler gave a range. */
+function endOf(diagnostic: RawDiagnostic): RawLocation | null {
+	const end = diagnostic.range?.end;
+	if (end && typeof end === 'object') return end;
+	if (typeof diagnostic.endLine === 'number' || typeof diagnostic.endColumn === 'number') {
+		return { line: diagnostic.endLine, column: diagnostic.endColumn };
 	}
 	return null;
 }
@@ -135,7 +198,7 @@ export function attributePath(
 	index: TokenLocationIndex,
 	mainPath: string | null
 ): string | null {
-	const location = locationOf(diagnostic);
+	const location = startOf(diagnostic);
 	if (location?.filename) return location.filename;
 
 	const line = number(location?.line) ?? number(diagnostic.line);
@@ -170,17 +233,107 @@ export function normaliseDiagnostic(
 	index: TokenLocationIndex,
 	mainPath: string | null
 ): NormalisedDiagnostic {
-	const location = locationOf(diagnostic);
-	const line = number(location?.line) ?? number(diagnostic.line);
-	const column = number(location?.column) ?? number(diagnostic.column);
+	const start = startOf(diagnostic);
+	const end = endOf(diagnostic);
+	const line = number(start?.line) ?? number(diagnostic.line);
+	const column = number(start?.column) ?? number(diagnostic.column);
+	const endLine = number(end?.line) ?? number(diagnostic.endLine);
+	const endColumn = number(end?.column) ?? number(diagnostic.endColumn);
 	const path = attributePath(diagnostic, index, mainPath);
 
 	const message = typeof diagnostic.message === 'string' ? diagnostic.message : String(diagnostic.message);
+	const severity =
+		diagnostic.severity === 'error' ||
+		diagnostic.severity === 'warning' ||
+		diagnostic.severity === 'note'
+			? diagnostic.severity
+			: undefined;
+	const code = typeof diagnostic.code === 'string' ? diagnostic.code : undefined;
+	const stage = typeof diagnostic.stage === 'string' ? diagnostic.stage : undefined;
+	const related = relatedOf(diagnostic, index, mainPath, path);
+	const hints = hintsOf(diagnostic.hints);
+	const fix = fixOf(diagnostic, index, mainPath, path);
+
 	return {
 		message,
 		...(line === undefined ? {} : { line }),
 		...(column === undefined ? {} : { column }),
+		...(endLine === undefined ? {} : { endLine }),
+		...(endColumn === undefined ? {} : { endColumn }),
+		...(severity ? { severity } : {}),
+		...(code ? { code } : {}),
+		...(stage ? { stage } : {}),
 		...(path ? { path } : {}),
+		...(related.length ? { related } : {}),
+		...(hints.length ? { hints } : {}),
+		...(fix ? { fix } : {}),
+	};
+}
+
+function relatedOf(
+	diagnostic: RawDiagnostic,
+	index: TokenLocationIndex,
+	mainPath: string | null,
+	fallbackPath: string | null
+): NonNullable<NormalisedDiagnostic['related']> {
+	const related: NonNullable<NormalisedDiagnostic['related']> = [];
+	for (const item of Array.isArray(diagnostic.related) ? diagnostic.related : []) {
+		if (!item || typeof item !== 'object') continue;
+		const start = item.range?.start ?? item.location ?? null;
+		const end = item.range?.end ?? null;
+		const line = number(start?.line);
+		const column = number(start?.column);
+		const endLine = number(end?.line);
+		const endColumn = number(end?.column);
+		const path =
+			line !== undefined
+				? attributePath({ message: '', line, column }, index, mainPath)
+				: fallbackPath;
+		related.push({
+			message: typeof item.message === 'string' ? item.message : '',
+			...(path ? { path } : {}),
+			...(line === undefined ? {} : { line }),
+			...(column === undefined ? {} : { column }),
+			...(endLine === undefined ? {} : { endLine }),
+			...(endColumn === undefined ? {} : { endColumn }),
+		});
+	}
+	return related;
+}
+
+function hintsOf(hints: RawDiagnostic['hints']): string[] {
+	const result: string[] = [];
+	for (const hint of Array.isArray(hints) ? hints : []) {
+		const text = typeof hint === 'string' ? hint : hint?.message;
+		if (typeof text === 'string' && text.length > 0) result.push(text);
+	}
+	return result;
+}
+
+function fixOf(
+	diagnostic: RawDiagnostic,
+	index: TokenLocationIndex,
+	mainPath: string | null,
+	fallbackPath: string | null
+): NormalisedDiagnostic['fix'] {
+	const fix = diagnostic.fix;
+	if (!fix || typeof fix.text !== 'string' || fix.text.length === 0) return undefined;
+	const start = fix.range?.start;
+	const end = fix.range?.end;
+	const line = number(start?.line);
+	const column = number(start?.column);
+	if (line === undefined || column === undefined) return undefined;
+	const endLine = number(end?.line) ?? line;
+	const endColumn = number(end?.column) ?? column;
+	const path =
+		attributePath({ message: '', line, column }, index, mainPath) ?? fallbackPath;
+	return {
+		...(path ? { path } : {}),
+		line,
+		column,
+		endLine,
+		endColumn,
+		text: fix.text,
 	};
 }
 

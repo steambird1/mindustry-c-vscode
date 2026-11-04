@@ -5,7 +5,8 @@ Logic (`mlog`).
 
 - **Diagnostics while you type**, from the compiler's own semantic analysis —
   parse and analyse only, debounced, on a worker thread so a compiler crash
-  cannot take the editor with it.
+  cannot take the editor with it. Each finding carries its compiler code, full
+  range, related locations and any insertion fix the compiler already knows.
 - **Navigation**: go to definition and declaration (function prototypes and
   forward declarations), find references, rename symbol, hover, signature help,
   completion.

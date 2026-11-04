@@ -429,17 +429,39 @@ these quirks rather than patching them into the compiler:
   types with the same name shadow each other in completion; hover and
   references still use the resolved analyser type.
 
+### Structured diagnostics
+
+`mindcDiagnostics.js` gives every compiler stage one shape:
+
+```js
+{
+  severity, stage, code, message,
+  range: { start: { line, column, index? }, end: { line, column, index? } },
+  line, column, endLine, endColumn,   // legacy start, 1-based
+  related?, hints?, fix?, details?
+}
+```
+
+`src/compiler/diagnostics.ts` normalises it — start/end positions, `code`,
+`stage`, related locations and the insertion `fix` all keep their owning file —
+and still attributes the file from the token stream, because diagnostics do not
+carry a filename. The server maps the result to LSP: the whole range, the
+diagnostic `code`, `relatedInformation`, hints appended to the message, and the
+compiler's insertion fix into `Diagnostic.data`. A code action applies that fix
+without re-analysing.
+
 ### Known limitation: which file a diagnostic belongs to
 
 A diagnostic's `line`/`column` is relative to the file the error was raised in,
 but the diagnostic does not say which file that is — only tokens carry
-`location.filename`. `src/compiler/diagnostics.ts` therefore attributes a
-diagnostic by matching its line and column against the token stream, which is
-exact when the error is on a token and approximate otherwise. An error inside a
-header can end up reported against the `#include` line of the including file.
-Doing this properly means the compiler putting the file on the diagnostic, which
-would be a third patch; it is worth doing if diagnostic attribution in headers
-becomes a problem.
+`location.filename`. The structured fields (`range`, `code`, `stage`, `related`,
+`hints`, `fix`) do not change that. `src/compiler/diagnostics.ts` therefore
+attributes a diagnostic by matching its start position against the token stream,
+which is exact when the error is on a token and approximate otherwise. An error
+inside a header can end up reported against the `#include` line of the including
+file. Doing this properly means the compiler putting the file on the diagnostic,
+which would be a third patch; it is worth doing if diagnostic attribution in
+headers becomes a problem.
 
 ## Crash containment
 

@@ -53,11 +53,18 @@ export function attributeDiagnostics(
 		severity: 'error' | 'warning'
 	): CompilerDiagnostic[] =>
 		normaliseDiagnostics(list as never[], index, mainPath).map(diagnostic => ({
-			severity,
+			severity: diagnostic.severity ?? severity,
 			message: diagnostic.message,
 			...(diagnostic.line === undefined ? {} : { line: diagnostic.line }),
 			...(diagnostic.column === undefined ? {} : { column: diagnostic.column }),
+			...(diagnostic.endLine === undefined ? {} : { endLine: diagnostic.endLine }),
+			...(diagnostic.endColumn === undefined ? {} : { endColumn: diagnostic.endColumn }),
+			...(diagnostic.code === undefined ? {} : { code: diagnostic.code }),
+			...(diagnostic.stage === undefined ? {} : { stage: diagnostic.stage }),
 			...(diagnostic.path === undefined ? {} : { path: diagnostic.path }),
+			...(diagnostic.related === undefined ? {} : { related: diagnostic.related }),
+			...(diagnostic.hints === undefined ? {} : { hints: diagnostic.hints }),
+			...(diagnostic.fix === undefined ? {} : { fix: diagnostic.fix }),
 		}));
 
 	return { errors: convert(errors, 'error'), warnings: convert(warnings, 'warning') };
