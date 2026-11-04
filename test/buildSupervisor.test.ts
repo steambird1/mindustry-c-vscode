@@ -26,6 +26,18 @@ parentPort.on('message', message => {
 });
 `;
 
+/** OOMs on the first build, then answers the next one in a fresh thread. */
+const OOM_BUILD = `const { parentPort } = require('node:worker_threads');
+const held = [];
+parentPort.on('message', message => {
+	if (message.type) return;
+	if (message.id === 1) {
+		for (;;) held.push(new Array(100000).fill(1));
+	}
+	parentPort.postMessage({ id: message.id, ok: true, success: true, code: 'ok', instructionCount: 1, errors: [], warnings: [], elapsedMs: 1 });
+});
+`;
+
 function fixture(name: string, body: string): string {
 	const file = path.join(__dirname, name);
 	fs.writeFileSync(file, body);
@@ -121,6 +133,32 @@ describe('cancelling a build', () => {
 			assert.equal(results.length, 1, 'the superseded build also answered');
 			assert.equal(results[0].id, second);
 			assert.deepEqual(crashes, []);
+		} finally {
+			await host.dispose();
+		}
+	});
+
+	it('reports an out-of-memory thread and answers the next build', async () => {
+		const results: BuildResponse[] = [];
+		const crashes: string[] = [];
+		const host = new BuildWorkerHost({
+			workerPath: fixture('fixture-oom-build.js', OOM_BUILD),
+			// Small enough to fail quickly; the supervisor must survive it.
+			resourceLimits: { maxOldGenerationSizeMb: 32, maxYoungGenerationSizeMb: 8 },
+			onResult: response => results.push(response),
+			onCrash: reason => crashes.push(reason),
+		});
+
+		try {
+			host.start(buildRequest());
+			await waitFor(() => crashes.length > 0, 'the out-of-memory crash');
+			assert.equal(results.length, 0, 'a dead build produced a result');
+			assert.match(crashes[0], /memory|heap/i, `unexpected crash reason: ${crashes[0]}`);
+
+			// The supervisor drops the dead thread; the next build gets a new one.
+			host.start(buildRequest());
+			await waitFor(() => results.length === 1, 'the replacement build');
+			assert.equal(results[0].code, 'ok');
 		} finally {
 			await host.dispose();
 		}

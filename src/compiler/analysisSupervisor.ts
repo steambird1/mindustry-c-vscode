@@ -11,9 +11,11 @@
  */
 
 import { Worker } from 'node:worker_threads';
+import type { ResourceLimits } from 'node:worker_threads';
 import * as path from 'node:path';
 
 import type { AnalysisRequest, AnalysisResponse, KnownDocumentsMessage } from '../common/types';
+import { COMPILER_WORKER_RESOURCE_LIMITS } from './workerLimits';
 
 export interface AnalysisWorkerOptions {
 	/** Absolute path of the built worker bundle. */
@@ -24,6 +26,8 @@ export interface AnalysisWorkerOptions {
 	onCrash?(reason: string): void;
 	/** Debounce window applied before a request is sent. */
 	debounceMs?: number;
+	/** Memory cap for the worker; tests use a small value. */
+	resourceLimits?: ResourceLimits;
 }
 
 export class AnalysisWorkerHost {
@@ -124,10 +128,16 @@ export class AnalysisWorkerHost {
 		try {
 			const worker = new Worker(this.options.workerPath, {
 				workerData: { knownPaths: this.knownPaths },
+				resourceLimits:
+					this.options.resourceLimits ?? COMPILER_WORKER_RESOURCE_LIMITS,
 			});
 			worker.on('message', (response: AnalysisResponse) => this.receive(response));
-			worker.on('error', error => this.died(error.stack ?? error.message));
+			worker.on('error', error => {
+				if (this.worker !== worker) return;
+				this.died(error.stack ?? error.message);
+			});
 			worker.on('exit', code => {
+				if (this.worker !== worker) return;
 				if (code !== 0) this.died(`the analyser thread exited with code ${code}`);
 			});
 			this.worker = worker;

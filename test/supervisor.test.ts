@@ -22,6 +22,18 @@ import type { AnalysisRequest, AnalysisResponse } from '../src/common/types';
 
 const URI = 'file:///project/main.mlgc';
 
+/** OOMs when the request text says so, otherwise answers normally. */
+const OOM_ANALYSIS = `const { parentPort } = require('node:worker_threads');
+const held = [];
+parentPort.on('message', message => {
+	if (message.type) return;
+	if (message.text.includes('OOM')) {
+		for (;;) held.push(new Array(100000).fill(1));
+	}
+	parentPort.postMessage({ id: message.id, uri: message.uri, diagnostics: [], index: null });
+});
+`;
+
 const request: Omit<AnalysisRequest, 'id'> = {
 	uri: URI,
 	version: 3,
@@ -79,6 +91,37 @@ describe('a thread that dies with a request in flight', () => {
 			assert.equal(response.diagnostics[0].severity, 'error');
 			assert.match(response.fatal!, /stopped unexpectedly/);
 			assert.ok(crashes.length >= 1, 'the crash itself should still be logged');
+		} finally {
+			await host.dispose();
+		}
+	});
+
+	it('reports an out-of-memory thread and answers the next request', async () => {
+		const seen: AnalysisResponse[] = [];
+		const crashes: string[] = [];
+		const host = new AnalysisWorkerHost({
+			workerPath: fixture('fixture-oom-analyser.js', OOM_ANALYSIS),
+			debounceMs: 0,
+			// Small enough to fail quickly; the supervisor must survive it.
+			resourceLimits: { maxOldGenerationSizeMb: 32, maxYoungGenerationSizeMb: 8 },
+			onResult: response => seen.push(response),
+			onCrash: reason => crashes.push(reason),
+		});
+
+		try {
+			host.analyse({ ...request, text: 'int main() { return 0; } // OOM' });
+			await waitFor(() => seen.length > 0, 'the lost request to be answered');
+
+			const failed = seen[0];
+			assert.equal(failed.index, null);
+			assert.match(String(failed.fatal), /memory|heap/i);
+			assert.ok(crashes.length >= 1, 'the crash itself should be logged');
+			assert.equal(host.crashCount, 1, 'the same death was counted twice');
+
+			// A fresh thread takes the next request.
+			host.analyse({ ...request, text: 'int main() { return 0; }' });
+			await waitFor(() => seen.length === 2, 'the replacement analysis');
+			assert.equal(seen[1].fatal, undefined);
 		} finally {
 			await host.dispose();
 		}

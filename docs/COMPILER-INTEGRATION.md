@@ -470,6 +470,15 @@ crash can only ever affect the worker; the supervisor respawns it. Builds run in
 a separate worker, exactly one at a time, and are cancelled by terminating that
 worker.
 
+Both workers are started with `resourceLimits` (512 MB old generation; see
+`src/compiler/workerLimits.ts`). A JavaScript heap OOM is fatal to a whole
+process when it happens in an unconstrained worker thread; with the limit, V8
+terminates only the worker with `ERR_WORKER_OUT_OF_MEMORY`. The supervisor sees
+that through its normal `error` path, reports it, and starts a fresh thread on
+the next request. A loop that keeps running without allocating is still not
+detected (no watchdog), but a runaway compiler now costs the worker, not the
+editor.
+
 The compiler has no cancellation hook and the optimiser is synchronous, so a
 cancel message would only be read after the run it was meant to stop. The
 compiler's own browser UI terminates its worker for the same reason

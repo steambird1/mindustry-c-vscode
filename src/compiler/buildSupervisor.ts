@@ -8,8 +8,10 @@
  */
 
 import { Worker } from 'node:worker_threads';
+import type { ResourceLimits } from 'node:worker_threads';
 
 import type { BuildRequest, BuildResponse, KnownDocumentsMessage } from '../common/types';
+import { COMPILER_WORKER_RESOURCE_LIMITS } from './workerLimits';
 
 export interface BuildWorkerOptions {
 	/** Absolute path of the built worker bundle. */
@@ -18,6 +20,8 @@ export interface BuildWorkerOptions {
 	onResult(response: BuildResponse): void;
 	/** Called when the worker dies. */
 	onCrash?(reason: string): void;
+	/** Memory cap for the worker; tests use a small value. */
+	resourceLimits?: ResourceLimits;
 }
 
 export class BuildWorkerHost {
@@ -90,6 +94,8 @@ export class BuildWorkerHost {
 		try {
 			const worker = new Worker(this.options.workerPath, {
 				workerData: { knownPaths: this.knownPaths },
+				resourceLimits:
+					this.options.resourceLimits ?? COMPILER_WORKER_RESOURCE_LIMITS,
 			});
 			worker.on('message', (response: BuildResponse) => {
 				if (this.worker !== worker) return;
